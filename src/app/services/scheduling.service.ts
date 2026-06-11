@@ -17,6 +17,12 @@ import {
   ClimateImpact,
   WeatherType,
   SeasonType,
+  CeremonyEvent,
+  CeremonySupplyNode,
+  CeremonyConsumptionPlan,
+  CeremonyType,
+  CeremonyLevel,
+  CeremonyStatus,
 } from '../models/ice.models';
 
 @Injectable({
@@ -32,6 +38,8 @@ export class SchedulingService {
   private _multiStageShipments = signal<MultiStageShipment[]>([]);
   private _transitOccupancies = signal<TransitOccupancy[]>([]);
   private _climates = signal<DailyClimate[]>([]);
+  private _ceremonies = signal<CeremonyEvent[]>([]);
+  private _ceremonyConsumptions = signal<CeremonyConsumptionPlan[]>([]);
 
   private _state = signal<SchedulingState>({
     currentDay: 0,
@@ -51,6 +59,10 @@ export class SchedulingService {
     replayConsistencyPassed: false,
     heatWarningPause: false,
     heatWarningReason: null,
+    ceremonyPause: false,
+    ceremonyPauseReason: null,
+    affectedCeremonies: [],
+    ceremonyDeficit: 0,
   });
 
   private timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -64,6 +76,8 @@ export class SchedulingService {
   readonly multiStageShipments = computed(() => this._multiStageShipments());
   readonly transitOccupancies = computed(() => this._transitOccupancies());
   readonly climates = computed(() => this._climates());
+  readonly ceremonies = computed(() => this._ceremonies());
+  readonly ceremonyConsumptions = computed(() => this._ceremonyConsumptions());
   readonly state = computed(() => this._state());
 
   readonly allNodes = computed<IceNode[]>(() => [
@@ -251,6 +265,8 @@ export class SchedulingService {
       multiStageUpdates: log.multiStageUpdates,
       transitOccupancies: log.transitOccupancies,
       weatherDelays: log.weatherDelays,
+      ceremonyUpdates: log.ceremonyUpdates,
+      ceremonyConsumptions: log.ceremonyConsumptions,
     });
     let hash = 0;
     for (let i = 0; i < hashContent.length; i++) {
@@ -483,6 +499,114 @@ export class SchedulingService {
 
   removeConsumptionPlan(id: string): void {
     this._consumptionPlans.update((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  addCeremony(data: Omit<CeremonyEvent, 'id' | 'status'>): CeremonyEvent {
+    if (data.startDay < 0) {
+      throw new Error('活动开始日期不能小于 0');
+    }
+    if (data.durationDays <= 0) {
+      throw new Error('活动持续天数必须大于 0');
+    }
+    if (data.supplyNodes.length === 0) {
+      throw new Error('至少需要配置一个保供节点');
+    }
+    for (const node of data.supplyNodes) {
+      if (node.minIceAmount <= 0) {
+        throw new Error('最低冰量必须大于 0');
+      }
+      const jian = this._jians().find(j => j.id === node.jianId);
+      if (!jian) {
+        throw new Error(`保供节点 ${node.jianId} 不存在`);
+      }
+    }
+
+    const ceremony: CeremonyEvent = {
+      ...data,
+      id: this.generateId(),
+      status: 'pending',
+    };
+    this._ceremonies.update((prev) => [...prev, ceremony]);
+    this._generateCeremonyConsumptionPlans(ceremony);
+    return ceremony;
+  }
+
+  updateCeremony(id: string, changes: Partial<Omit<CeremonyEvent, 'id' | 'status'>>): void {
+    const ceremony = this._ceremonies().find(c => c.id === id);
+    if (!ceremony) return;
+
+    const updated = { ...ceremony, ...changes };
+    if (updated.startDay < 0) {
+      throw new Error('活动开始日期不能小于 0');
+    }
+    if (updated.durationDays <= 0) {
+      throw new Error('活动持续天数必须大于 0');
+    }
+
+    this._ceremonies.update((prev) =>
+      prev.map((c) => (c.id === id ? updated : c))
+    );
+
+    this._removeCeremonyConsumptionPlans(id);
+    this._generateCeremonyConsumptionPlans(updated);
+  }
+
+  removeCeremony(id: string): void {
+    this._removeCeremonyConsumptionPlans(id);
+    this._ceremonies.update((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  private _generateCeremonyConsumptionPlans(ceremony: CeremonyEvent): void {
+    const plans: CeremonyConsumptionPlan[] = [];
+    const levelPriorityMap: Record<CeremonyLevel, number> = {
+      grand: 100,
+      major: 75,
+      minor: 50,
+      ordinary: 25,
+    };
+    const basePriority = levelPriorityMap[ceremony.level];
+
+    for (let day = ceremony.startDay; day < ceremony.startDay + ceremony.durationDays; day++) {
+      for (const node of ceremony.supplyNodes) {
+        plans.push({
+          ceremonyId: ceremony.id,
+          ceremonyName: ceremony.name,
+          jianId: node.jianId,
+          day,
+          amount: node.minIceAmount,
+          priority: basePriority + node.priority,
+          level: ceremony.level,
+          isCeremony: true,
+        });
+      }
+    }
+
+    this._ceremonyConsumptions.update((prev) => [...prev, ...plans]);
+  }
+
+  private _removeCeremonyConsumptionPlans(ceremonyId: string): void {
+    this._ceremonyConsumptions.update((prev) =>
+      prev.filter((p) => p.ceremonyId !== ceremonyId)
+    );
+  }
+
+  getCeremonyById(id: string): CeremonyEvent | undefined {
+    return this._ceremonies().find(c => c.id === id);
+  }
+
+  getCeremoniesForDay(day: number): CeremonyEvent[] {
+    return this._ceremonies().filter(c =>
+      c.status !== 'cancelled' &&
+      c.status !== 'failed' &&
+      day >= c.startDay &&
+      day < c.startDay + c.durationDays
+    );
+  }
+
+  getCeremonyConsumptionsForDay(day: number): CeremonyConsumptionPlan[] {
+    return this._ceremonyConsumptions()
+      .filter(p => p.day === day)
+      .sort((a, b) => b.priority - a.priority);
   }
 
   addShipment(data: Omit<Shipment, 'id' | 'status'>): {
@@ -1270,6 +1394,30 @@ export class SchedulingService {
     return { hasRisk: false, reason: null };
   }
 
+  checkAllCeremoniesFeasibility(): { feasible: boolean; issues: string[] } {
+    const allIssues: string[] = [];
+
+    for (const ceremony of this._ceremonies()) {
+      if (ceremony.status === 'cancelled') continue;
+
+      const result = this.checkCeremonyFeasibility({
+        name: ceremony.name,
+        type: ceremony.type,
+        level: ceremony.level,
+        startDay: ceremony.startDay,
+        durationDays: ceremony.durationDays,
+        supplyNodes: ceremony.supplyNodes,
+        description: ceremony.description,
+      });
+
+      if (!result.feasible) {
+        allIssues.push(`活动「${ceremony.name}」：${result.issues.join('；')}`);
+      }
+    }
+
+    return { feasible: allIssues.length === 0, issues: allIssues };
+  }
+
   private simulateJianStockAtDay(jianId: string, targetDay: number): number {
     const jian = this._jians().find((j) => j.id === jianId);
     if (!jian) return 0;
@@ -1277,6 +1425,15 @@ export class SchedulingService {
     let stock = jian.currentStock;
     const consumptionByDay = new Map<number, number>();
     for (const p of this._consumptionPlans()) {
+      if (p.jianId === jianId) {
+        const climate = this.getClimateForDay(p.day);
+        const impact = this.calculateClimateImpact(climate);
+        const adjustedAmount = Math.floor(p.amount * impact.demandMultiplier);
+        consumptionByDay.set(p.day, (consumptionByDay.get(p.day) || 0) + adjustedAmount);
+      }
+    }
+
+    for (const p of this._ceremonyConsumptions()) {
       if (p.jianId === jianId) {
         const climate = this.getClimateForDay(p.day);
         const impact = this.calculateClimateImpact(climate);
@@ -1327,6 +1484,10 @@ export class SchedulingService {
       replayConsistencyPassed: false,
       heatWarningPause: false,
       heatWarningReason: null,
+      ceremonyPause: false,
+      ceremonyPauseReason: null,
+      affectedCeremonies: [],
+      ceremonyDeficit: 0,
     }));
     this._shipments.update((prev) =>
       prev.map((s) => ({ ...s, status: 'pending' as const }))
@@ -1341,6 +1502,9 @@ export class SchedulingService {
       }))
     );
     this._transitOccupancies.set([]);
+    this._ceremonies.update(prev =>
+      prev.map(c => ({ ...c, status: 'pending' as const, failureReason: undefined }))
+    );
   }
 
   start(): void {
@@ -1352,6 +1516,18 @@ export class SchedulingService {
         ...s,
         isOverAllocated: true,
         overAllocationReason: overAllocCheck.reason,
+        isPaused: true,
+      }));
+      return;
+    }
+
+    const ceremonyCheck = this.checkAllCeremoniesFeasibility();
+    if (!ceremonyCheck.feasible) {
+      this._state.update((s) => ({
+        ...s,
+        ceremonyPause: true,
+        ceremonyPauseReason: ceremonyCheck.issues[0],
+        pauseReason: ceremonyCheck.issues[0],
         isPaused: true,
       }));
       return;
@@ -1374,6 +1550,10 @@ export class SchedulingService {
       overAllocationReason: null,
       heatWarningPause: false,
       heatWarningReason: null,
+      ceremonyPause: false,
+      ceremonyPauseReason: null,
+      affectedCeremonies: [],
+      ceremonyDeficit: 0,
     }));
 
     this.startTimer();
@@ -1467,7 +1647,9 @@ export class SchedulingService {
     this.processWeatherDelays(nextDay, log);
     this.processMultiStageShipments(nextDay, log);
     this.processDeliveries(nextDay, log);
+    this.processCeremonyStatusUpdates(nextDay, log);
     this.processConsumptions(nextDay, log);
+    this.processCeremonyConsumptions(nextDay, log);
 
     log.logHash = this.generateLogHash(log);
 
@@ -1518,6 +1700,8 @@ export class SchedulingService {
       multiStageUpdates: [],
       transitOccupancies: [],
       weatherDelays: [],
+      ceremonyUpdates: [],
+      ceremonyConsumptions: [],
       logHash: '',
     };
   }
@@ -1806,6 +1990,170 @@ export class SchedulingService {
     }
   }
 
+  private processCeremonyStatusUpdates(day: number, log: DailyLog): void {
+    for (const ceremony of this._ceremonies()) {
+      if (ceremony.status === 'cancelled' || ceremony.status === 'failed' || ceremony.status === 'completed') {
+        continue;
+      }
+
+      const isStartDay = day === ceremony.startDay;
+      const isEndDay = day === ceremony.startDay + ceremony.durationDays - 1;
+
+      if (isStartDay && ceremony.status === 'pending') {
+        this._ceremonies.update(prev =>
+          prev.map(c => c.id === ceremony.id ? { ...c, status: 'active' } : c)
+        );
+        log.ceremonyUpdates.push({
+          ceremonyId: ceremony.id,
+          ceremonyName: ceremony.name,
+          status: 'active',
+        });
+        log.warnings.push(`第 ${day} 天: 活动「${ceremony.name}」开始，启用保供优先级调度`);
+      }
+
+      if (isEndDay && ceremony.status === 'active') {
+        this._ceremonies.update(prev =>
+          prev.map(c => c.id === ceremony.id ? { ...c, status: 'completed' } : c)
+        );
+        log.ceremonyUpdates.push({
+          ceremonyId: ceremony.id,
+          ceremonyName: ceremony.name,
+          status: 'completed',
+        });
+      }
+    }
+  }
+
+  private processCeremonyConsumptions(day: number, log: DailyLog): void {
+    const ceremonyPlans = this.getCeremonyConsumptionsForDay(day);
+    if (ceremonyPlans.length === 0) return;
+
+    const impact = log.climateImpact || { lossRateMultiplier: 1, travelTimeMultiplier: 1, capacityMultiplier: 1, demandMultiplier: 1 };
+    const levelNameMap: Record<CeremonyLevel, string> = {
+      grand: '大祀',
+      major: '中祀',
+      minor: '小祀',
+      ordinary: '常例',
+    };
+
+    let totalDeficit = 0;
+    const affectedCeremonyIds: string[] = [];
+    const affectedCeremonyNames: string[] = [];
+
+    for (const plan of ceremonyPlans) {
+      const jian = this._jians().find(j => j.id === plan.jianId);
+      if (!jian) {
+        log.ceremonyConsumptions.push({
+          ceremonyId: plan.ceremonyId,
+          ceremonyName: plan.ceremonyName,
+          jianId: plan.jianId,
+          amount: plan.amount,
+          success: false,
+          reason: '冰鉴不存在',
+        });
+        continue;
+      }
+
+      const adjustedAmount = Math.floor(plan.amount * impact.demandMultiplier);
+
+      if (jian.currentStock < adjustedAmount) {
+        const deficit = adjustedAmount - jian.currentStock;
+        totalDeficit += deficit;
+
+        if (!affectedCeremonyIds.includes(plan.ceremonyId)) {
+          affectedCeremonyIds.push(plan.ceremonyId);
+          affectedCeremonyNames.push(plan.ceremonyName);
+        }
+
+        log.ceremonyConsumptions.push({
+          ceremonyId: plan.ceremonyId,
+          ceremonyName: plan.ceremonyName,
+          jianId: plan.jianId,
+          amount: adjustedAmount,
+          success: false,
+          reason: `库存不足，${levelNameMap[plan.level]}活动保供缺口 ${deficit} 单位`,
+        });
+
+        log.errors.push(
+          `第 ${day} 天: 活动「${plan.ceremonyName}」[${jian.name}] 保供不足，需求 ${adjustedAmount}，实际库存 ${jian.currentStock}，缺口 ${deficit}`
+        );
+
+        this._failCeremony(plan.ceremonyId, `第 ${day} 天 ${jian.name} 库存不足，缺口 ${deficit} 单位`, log);
+      } else {
+        this.updateJian(jian.id, {
+          currentStock: jian.currentStock - adjustedAmount,
+        });
+        log.jianStocks[jian.id] = jian.currentStock - adjustedAmount;
+        log.ceremonyConsumptions.push({
+          ceremonyId: plan.ceremonyId,
+          ceremonyName: plan.ceremonyName,
+          jianId: plan.jianId,
+          amount: adjustedAmount,
+          success: true,
+        });
+      }
+    }
+
+    if (totalDeficit > 0) {
+      const pauseReason = `活动保供中断：${affectedCeremonyNames.join('、')} 等 ${affectedCeremonyIds.length} 项活动无法按时保供，总缺口 ${totalDeficit} 单位冰`;
+      this._state.update((s) => ({
+        ...s,
+        isPaused: true,
+        ceremonyPause: true,
+        ceremonyPauseReason: pauseReason,
+        pauseReason: pauseReason,
+        affectedCeremonies: affectedCeremonyIds,
+        ceremonyDeficit: totalDeficit,
+      }));
+      this.stopTimer();
+    }
+  }
+
+  private _failCeremony(ceremonyId: string, reason: string, log: DailyLog): void {
+    const ceremony = this._ceremonies().find(c => c.id === ceremonyId);
+    if (!ceremony || ceremony.status === 'failed' || ceremony.status === 'cancelled') return;
+
+    this._ceremonies.update(prev =>
+      prev.map(c => c.id === ceremonyId ? { ...c, status: 'failed', failureReason: reason } : c)
+    );
+
+    const existingUpdate = log.ceremonyUpdates.find(u => u.ceremonyId === ceremonyId);
+    if (!existingUpdate) {
+      log.ceremonyUpdates.push({
+        ceremonyId,
+        ceremonyName: ceremony.name,
+        status: 'failed',
+        failureReason: reason,
+      });
+    }
+  }
+
+  checkCeremonyFeasibility(ceremony: Omit<CeremonyEvent, 'id' | 'status'>): { feasible: boolean; issues: string[] } {
+    const issues: string[] = [];
+    const totalDays = this._state().totalDays;
+
+    if (ceremony.startDay + ceremony.durationDays - 1 > totalDays) {
+      issues.push(`活动结束日期（第 ${ceremony.startDay + ceremony.durationDays - 1} 天）超出调度周期（共 ${totalDays} 天）`);
+    }
+
+    for (const node of ceremony.supplyNodes) {
+      const jian = this._jians().find(j => j.id === node.jianId);
+      if (!jian) {
+        issues.push(`保供节点 ${node.jianId} 不存在`);
+        continue;
+      }
+
+      for (let day = ceremony.startDay; day < ceremony.startDay + ceremony.durationDays; day++) {
+        const simulatedStock = this.simulateJianStockAtDay(jian.id, day);
+        if (simulatedStock < node.minIceAmount) {
+          issues.push(`第 ${day} 天 [${jian.name}] 预测库存 ${simulatedStock.toFixed(0)}，低于活动最低冰量 ${node.minIceAmount}`);
+        }
+      }
+    }
+
+    return { feasible: issues.length === 0, issues };
+  }
+
   jumpToDay(targetDay: number): void {
     if (targetDay < 0 || targetDay > this._state().totalDays) return;
 
@@ -1840,6 +2188,9 @@ export class SchedulingService {
     this._transitOccupancies.update(prev =>
       prev.map(o => ({ ...o, status: 'active' as const }))
     );
+    this._ceremonies.update(prev =>
+      prev.map(c => ({ ...c, status: 'pending' as const, failureReason: undefined }))
+    );
     this._state.update((s) => ({
       ...s,
       currentDay: 0,
@@ -1856,6 +2207,10 @@ export class SchedulingService {
       replayConsistencyPassed: false,
       heatWarningPause: false,
       heatWarningReason: null,
+      ceremonyPause: false,
+      ceremonyPauseReason: null,
+      affectedCeremonies: [],
+      ceremonyDeficit: 0,
     }));
   }
 
@@ -1966,6 +2321,20 @@ export class SchedulingService {
       };
     }
 
+    if (originalLog.ceremonyUpdates.length !== replayLog.ceremonyUpdates.length) {
+      return {
+        success: false,
+        error: `第 ${replayLog.day} 日活动更新记录数不一致：原 ${originalLog.ceremonyUpdates.length}，回放 ${replayLog.ceremonyUpdates.length}`,
+      };
+    }
+
+    if (originalLog.ceremonyConsumptions.length !== replayLog.ceremonyConsumptions.length) {
+      return {
+        success: false,
+        error: `第 ${replayLog.day} 日活动保供记录数不一致：原 ${originalLog.ceremonyConsumptions.length}，回放 ${replayLog.ceremonyConsumptions.length}`,
+      };
+    }
+
     return { success: true };
   }
 
@@ -2027,6 +2396,16 @@ export class SchedulingService {
       );
     }
 
+    for (const update of log.ceremonyUpdates) {
+      this._ceremonies.update(prev =>
+        prev.map(c =>
+          c.id === update.ceremonyId
+            ? { ...c, status: update.status, failureReason: update.failureReason }
+            : c
+        )
+      );
+    }
+
     this._state.update((s) => ({
       ...s,
       currentDay: log.day,
@@ -2044,6 +2423,7 @@ export class SchedulingService {
       shipments: JSON.parse(JSON.stringify(this._shipments())),
       multiStageShipments: JSON.parse(JSON.stringify(this._multiStageShipments())),
       climates: JSON.parse(JSON.stringify(this._climates())),
+      ceremonies: JSON.parse(JSON.stringify(this._ceremonies())),
       totalDays: this._state().totalDays,
     };
   }
@@ -2058,6 +2438,11 @@ export class SchedulingService {
     this._shipments.set(config.shipments);
     this._multiStageShipments.set(config.multiStageShipments || []);
     this._climates.set(config.climates || []);
+    this._ceremonies.set(config.ceremonies || []);
+    this._ceremonyConsumptions.set([]);
+    for (const ceremony of (config.ceremonies || [])) {
+      this._generateCeremonyConsumptionPlans(ceremony);
+    }
     this.setTotalDays(config.totalDays);
   }
 
@@ -2301,6 +2686,44 @@ export class SchedulingService {
       totalAmount: 1000,
       nodeIds: [cellar1.id, transit1.id, transit2.id, jian1.id],
       startDay: 25,
+    });
+
+    this.addCeremony({
+      name: '端午祭典',
+      type: 'sacrifice',
+      level: 'major',
+      startDay: 5,
+      durationDays: 3,
+      supplyNodes: [
+        { jianId: jian1.id, minIceAmount: 100, priority: 10 },
+        { jianId: jian2.id, minIceAmount: 50, priority: 5 },
+      ],
+      description: '端午祭祀大典，需大量冰鉴供祭祀及宴席使用',
+    });
+
+    this.addCeremony({
+      name: '千秋节御宴',
+      type: 'banquet',
+      level: 'grand',
+      startDay: 12,
+      durationDays: 1,
+      supplyNodes: [
+        { jianId: jian1.id, minIceAmount: 200, priority: 20 },
+      ],
+      description: '皇帝寿辰千秋节，宫中大摆筵席',
+    });
+
+    this.addCeremony({
+      name: '中伏纳凉宴',
+      type: 'festival',
+      level: 'minor',
+      startDay: 23,
+      durationDays: 2,
+      supplyNodes: [
+        { jianId: jian1.id, minIceAmount: 80, priority: 8 },
+        { jianId: jian2.id, minIceAmount: 60, priority: 6 },
+      ],
+      description: '中伏时节宫中纳凉消暑活动',
     });
 
     for (let day = 1; day <= 30; day++) {

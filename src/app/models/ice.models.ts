@@ -1,6 +1,40 @@
 export type WeatherType = 'sunny' | 'cloudy' | 'rainy' | 'snowy' | 'hot_wave' | 'cool' | 'freezing';
 export type SeasonType = 'spring' | 'summer' | 'autumn' | 'winter';
 
+export type CeremonyType = 'festival' | 'banquet' | 'sacrifice' | 'imperial_audience' | 'other';
+export type CeremonyLevel = 'grand' | 'major' | 'minor' | 'ordinary';
+export type CeremonyStatus = 'pending' | 'active' | 'completed' | 'cancelled' | 'failed';
+
+export interface CeremonySupplyNode {
+  jianId: string;
+  minIceAmount: number;
+  priority: number;
+}
+
+export interface CeremonyEvent {
+  id: string;
+  name: string;
+  type: CeremonyType;
+  level: CeremonyLevel;
+  startDay: number;
+  durationDays: number;
+  supplyNodes: CeremonySupplyNode[];
+  description?: string;
+  status: CeremonyStatus;
+  failureReason?: string;
+}
+
+export interface CeremonyConsumptionPlan {
+  ceremonyId: string;
+  ceremonyName: string;
+  jianId: string;
+  day: number;
+  amount: number;
+  priority: number;
+  level: CeremonyLevel;
+  isCeremony: boolean;
+}
+
 export interface DailyClimate {
   id: string;
   day: number;
@@ -136,13 +170,15 @@ export interface DailyLog {
   transitStocks: { [nodeId: string]: number };
   activeShipments: Shipment[];
   deliveries: Shipment[];
-  consumptions: { jianId: string; amount: number; success: boolean; reason?: string }[];
+  consumptions: { jianId: string; amount: number; success: boolean; reason?: string; isCeremony?: boolean; ceremonyId?: string; ceremonyName?: string }[];
   dailyLosses: { nodeId: string; amount: number; climateBonus?: number }[];
   warnings: string[];
   errors: string[];
   multiStageUpdates: { multiStageId: string; stageIndex: number; status: string; delayDays?: number }[];
   transitOccupancies: { occupancyId: string; nodeId: string; amount: number; status: string }[];
   weatherDelays: { shipmentId: string; delayDays: number; reason: string }[];
+  ceremonyUpdates: { ceremonyId: string; ceremonyName: string; status: CeremonyStatus; failureReason?: string }[];
+  ceremonyConsumptions: { ceremonyId: string; ceremonyName: string; jianId: string; amount: number; success: boolean; reason?: string }[];
   logHash: string;
 }
 
@@ -164,6 +200,10 @@ export interface SchedulingState {
   replayConsistencyPassed: boolean;
   heatWarningPause: boolean;
   heatWarningReason: string | null;
+  ceremonyPause: boolean;
+  ceremonyPauseReason: string | null;
+  affectedCeremonies: string[];
+  ceremonyDeficit: number;
 }
 
 export interface SchedulingConfig {
@@ -175,5 +215,6 @@ export interface SchedulingConfig {
   shipments: Shipment[];
   multiStageShipments: MultiStageShipment[];
   climates: DailyClimate[];
+  ceremonies: CeremonyEvent[];
   totalDays: number;
 }
