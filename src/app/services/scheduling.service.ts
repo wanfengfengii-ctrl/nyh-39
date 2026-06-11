@@ -551,6 +551,8 @@ export class SchedulingService {
       lossAmount,
       receivedAmount: data.amount - lossAmount,
       status: 'pending',
+      baseArrivalDay: data.arrivalDay,
+      weatherDelayApplied: false,
     };
 
     this._shipments.update((prev) => [...prev, shipment]);
@@ -653,6 +655,8 @@ export class SchedulingService {
         status: 'pending',
         transitStayDays: stayDays,
         occupancyId: isLastStage ? undefined : occupancyId,
+        baseArrivalDay: arrivalDay,
+        weatherDelayApplied: false,
       });
 
       currentDay = arrivalDay + (isLastStage ? 0 : stayDays);
@@ -1008,6 +1012,8 @@ export class SchedulingService {
       status: 'in_transit',
       multiStageId: multiStage.id,
       stageIndex: multiStage.currentStageIndex,
+      baseArrivalDay: stage.baseArrivalDay ?? stage.arrivalDay,
+      weatherDelayApplied: false,
     };
     this._shipments.update((prev) => [...prev, shipment]);
 
@@ -1457,9 +1463,9 @@ export class SchedulingService {
     }
 
     this.processDailyLoss(nextDay, log);
+    this.processShipmentTransits(nextDay, log);
     this.processWeatherDelays(nextDay, log);
     this.processMultiStageShipments(nextDay, log);
-    this.processShipmentTransits(nextDay, log);
     this.processDeliveries(nextDay, log);
     this.processConsumptions(nextDay, log);
 
@@ -1575,21 +1581,32 @@ export class SchedulingService {
     const weatherDesc = log.climate ? weatherMap[log.climate.weather] || '恶劣天气' : '恶劣天气';
 
     const inTransitShipments = this._shipments().filter(
-      (s) => s.status === 'in_transit' && !s.multiStageId
+      (s) => s.status === 'in_transit' && !s.weatherDelayApplied
     );
 
     for (const shipment of inTransitShipments) {
-      const originalArrivalDay = shipment.arrivalDay;
-      const delayDays = Math.ceil(originalArrivalDay * (impact.travelTimeMultiplier - 1));
-      if (delayDays > 0 && day >= shipment.startDay && day < originalArrivalDay) {
-        const newArrivalDay = originalArrivalDay + delayDays;
+      const baseArrival = shipment.baseArrivalDay ?? shipment.arrivalDay;
+      const travelDays = baseArrival - shipment.startDay;
+      const delayDays = Math.ceil(travelDays * (impact.travelTimeMultiplier - 1));
+      if (delayDays > 0) {
+        const newArrivalDay = baseArrival + delayDays;
         this._shipments.update((prev) =>
           prev.map((s) =>
             s.id === shipment.id
-              ? { ...s, arrivalDay: newArrivalDay, lossAmount: Math.floor(s.amount * (s.lossAmount / s.amount + impact.lossRateMultiplier * 0.05)) }
+              ? {
+                  ...s,
+                  arrivalDay: newArrivalDay,
+                  weatherDelayApplied: true,
+                  lossAmount: Math.floor(s.amount * (s.lossAmount / s.amount + impact.lossRateMultiplier * 0.05)),
+                }
               : s
           )
         );
+
+        if (shipment.multiStageId && shipment.stageIndex !== undefined) {
+          this._delayMultiStageShipment(shipment.multiStageId, shipment.stageIndex, delayDays, log);
+        }
+
         log.weatherDelays.push({
           shipmentId: shipment.id,
           delayDays,
@@ -1598,8 +1615,67 @@ export class SchedulingService {
         log.warnings.push(
           `第 ${day} 天: 运输 [${shipment.id}] 因${weatherDesc}延误 ${delayDays} 天，预计第 ${newArrivalDay} 天到达`
         );
+      } else {
+        this._shipments.update((prev) =>
+          prev.map((s) =>
+            s.id === shipment.id ? { ...s, weatherDelayApplied: true } : s
+          )
+        );
       }
     }
+  }
+
+  private _delayMultiStageShipment(multiStageId: string, stageIndex: number, delayDays: number, log: DailyLog): void {
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) => {
+        if (m.id !== multiStageId) return m;
+        const updatedStages = m.stages.map((s, i) => {
+          if (i < stageIndex) return s;
+          if (i === stageIndex) {
+            return {
+              ...s,
+              arrivalDay: (s.baseArrivalDay ?? s.arrivalDay) + delayDays,
+              weatherDelayApplied: true,
+            };
+          }
+          return {
+            ...s,
+            startDay: s.startDay + delayDays,
+            arrivalDay: s.arrivalDay + delayDays,
+            baseArrivalDay: (s.baseArrivalDay ?? s.arrivalDay) + delayDays,
+          };
+        });
+        const updatedOccupancies = m.occupancies?.map((o) => ({
+          ...o,
+          startDay: o.startDay + delayDays,
+          endDay: o.endDay + delayDays,
+        }));
+        return {
+          ...m,
+          stages: updatedStages,
+          occupancies: updatedOccupancies,
+        };
+      })
+    );
+
+    this._transitOccupancies.update((prev) =>
+      prev.map((o) => {
+        if (o.multiStageId !== multiStageId) return o;
+        if (o.stageIndex < stageIndex) return o;
+        return {
+          ...o,
+          startDay: o.startDay + delayDays,
+          endDay: o.endDay + delayDays,
+        };
+      })
+    );
+
+    log.multiStageUpdates.push({
+      multiStageId,
+      stageIndex,
+      status: 'delayed',
+      delayDays,
+    });
   }
 
   private processShipmentTransits(day: number, log: DailyLog): void {

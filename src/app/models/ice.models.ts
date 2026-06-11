@@ -83,6 +83,8 @@ export interface Shipment {
   status: 'pending' | 'in_transit' | 'delivered' | 'cancelled';
   multiStageId?: string;
   stageIndex?: number;
+  baseArrivalDay?: number;
+  weatherDelayApplied?: boolean;
 }
 
 export interface ShipmentStage {
@@ -98,6 +100,8 @@ export interface ShipmentStage {
   status: 'pending' | 'in_transit' | 'delivered' | 'cancelled' | 'failed';
   transitStayDays?: number;
   occupancyId?: string;
+  baseArrivalDay?: number;
+  weatherDelayApplied?: boolean;
 }
 
 export interface TransitOccupancy {
@@ -136,7 +140,7 @@ export interface DailyLog {
   dailyLosses: { nodeId: string; amount: number; climateBonus?: number }[];
   warnings: string[];
   errors: string[];
-  multiStageUpdates: { multiStageId: string; stageIndex: number; status: string }[];
+  multiStageUpdates: { multiStageId: string; stageIndex: number; status: string; delayDays?: number }[];
   transitOccupancies: { occupancyId: string; nodeId: string; amount: number; status: string }[];
   weatherDelays: { shipmentId: string; delayDays: number; reason: string }[];
   logHash: string;

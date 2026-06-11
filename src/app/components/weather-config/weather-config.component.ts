@@ -153,6 +153,26 @@ export class WeatherConfigComponent {
   getClimateImpactPreview(day: number): string {
     const climate = this.schedulingService.getClimateForDay(day);
     const impact = this.schedulingService.calculateClimateImpact(climate);
+    return this.formatImpactPreview(impact);
+  }
+
+  getFormClimateImpactPreview(): string {
+    const climate: DailyClimate = {
+      id: 'preview',
+      day: this.newClimate.day,
+      temperature: this.newClimate.temperature,
+      weather: this.newClimate.weather,
+      season: this.newClimate.season,
+      seasonEvent: this.newClimate.seasonEvent || undefined,
+      hasHeatWarning: this.newClimate.hasHeatWarning,
+      heatWarningLevel: this.newClimate.hasHeatWarning ? this.newClimate.heatWarningLevel : undefined,
+      description: this.newClimate.description || undefined,
+    };
+    const impact = this.schedulingService.calculateClimateImpact(climate);
+    return this.formatImpactPreview(impact);
+  }
+
+  private formatImpactPreview(impact: { lossRateMultiplier: number; demandMultiplier: number; travelTimeMultiplier: number; capacityMultiplier: number }): string {
     const parts: string[] = [];
     if (impact.lossRateMultiplier !== 1) {
       parts.push(`损耗${impact.lossRateMultiplier > 1 ? '↑' : '↓'}${((impact.lossRateMultiplier - 1) * 100).toFixed(0)}%`);
