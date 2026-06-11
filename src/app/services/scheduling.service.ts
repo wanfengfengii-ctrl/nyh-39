@@ -13,6 +13,10 @@ import {
   MultiStageShipment,
   ShipmentStage,
   TransitOccupancy,
+  DailyClimate,
+  ClimateImpact,
+  WeatherType,
+  SeasonType,
 } from '../models/ice.models';
 
 @Injectable({
@@ -27,6 +31,7 @@ export class SchedulingService {
   private _shipments = signal<Shipment[]>([]);
   private _multiStageShipments = signal<MultiStageShipment[]>([]);
   private _transitOccupancies = signal<TransitOccupancy[]>([]);
+  private _climates = signal<DailyClimate[]>([]);
 
   private _state = signal<SchedulingState>({
     currentDay: 0,
@@ -44,6 +49,8 @@ export class SchedulingService {
     failedMultiStageId: null,
     replayConsistencyError: null,
     replayConsistencyPassed: false,
+    heatWarningPause: false,
+    heatWarningReason: null,
   });
 
   private timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -56,6 +63,7 @@ export class SchedulingService {
   readonly shipments = computed(() => this._shipments());
   readonly multiStageShipments = computed(() => this._multiStageShipments());
   readonly transitOccupancies = computed(() => this._transitOccupancies());
+  readonly climates = computed(() => this._climates());
   readonly state = computed(() => this._state());
 
   readonly allNodes = computed<IceNode[]>(() => [
@@ -68,9 +76,172 @@ export class SchedulingService {
     return Math.random().toString(36).substring(2, 11);
   }
 
+  getClimateForDay(day: number): DailyClimate | null {
+    return this._climates().find(c => c.day === day) || null;
+  }
+
+  calculateClimateImpact(climate: DailyClimate | null): ClimateImpact {
+    if (!climate) {
+      return {
+        lossRateMultiplier: 1,
+        travelTimeMultiplier: 1,
+        capacityMultiplier: 1,
+        demandMultiplier: 1,
+      };
+    }
+
+    let lossMultiplier = 1;
+    let travelMultiplier = 1;
+    let capacityMultiplier = 1;
+    let demandMultiplier = 1;
+
+    if (climate.temperature > 35) {
+      lossMultiplier *= 1.8;
+      demandMultiplier *= 1.5;
+      capacityMultiplier *= 0.9;
+    } else if (climate.temperature > 28) {
+      lossMultiplier *= 1.4;
+      demandMultiplier *= 1.2;
+    } else if (climate.temperature > 20) {
+      lossMultiplier *= 1.1;
+    } else if (climate.temperature < -5) {
+      lossMultiplier *= 0.6;
+      demandMultiplier *= 0.8;
+      capacityMultiplier *= 1.1;
+    } else if (climate.temperature < 5) {
+      lossMultiplier *= 0.8;
+      demandMultiplier *= 0.9;
+    }
+
+    switch (climate.weather) {
+      case 'hot_wave':
+        lossMultiplier *= 1.5;
+        demandMultiplier *= 1.3;
+        break;
+      case 'sunny':
+        lossMultiplier *= 1.1;
+        break;
+      case 'rainy':
+        travelMultiplier *= 1.3;
+        lossMultiplier *= 0.95;
+        break;
+      case 'snowy':
+        travelMultiplier *= 1.5;
+        lossMultiplier *= 0.7;
+        break;
+      case 'freezing':
+        travelMultiplier *= 1.2;
+        lossMultiplier *= 0.5;
+        break;
+      case 'cloudy':
+        lossMultiplier *= 0.95;
+        break;
+      case 'cool':
+        lossMultiplier *= 0.85;
+        break;
+    }
+
+    switch (climate.season) {
+      case 'summer':
+        lossMultiplier *= 1.2;
+        demandMultiplier *= 1.2;
+        break;
+      case 'winter':
+        lossMultiplier *= 0.8;
+        demandMultiplier *= 0.9;
+        break;
+      case 'spring':
+        lossMultiplier *= 1.05;
+        break;
+      case 'autumn':
+        lossMultiplier *= 0.95;
+        break;
+    }
+
+    if (climate.hasHeatWarning) {
+      switch (climate.heatWarningLevel) {
+        case 'yellow':
+          lossMultiplier *= 1.2;
+          demandMultiplier *= 1.1;
+          break;
+        case 'orange':
+          lossMultiplier *= 1.4;
+          demandMultiplier *= 1.2;
+          capacityMultiplier *= 0.85;
+          break;
+        case 'red':
+          lossMultiplier *= 1.8;
+          demandMultiplier *= 1.4;
+          capacityMultiplier *= 0.7;
+          travelMultiplier *= 1.2;
+          break;
+      }
+    }
+
+    return {
+      lossRateMultiplier: Math.max(0.1, lossMultiplier),
+      travelTimeMultiplier: Math.max(0.5, travelMultiplier),
+      capacityMultiplier: Math.max(0.3, Math.min(1.5, capacityMultiplier)),
+      demandMultiplier: Math.max(0.5, demandMultiplier),
+    };
+  }
+
+  addClimate(data: Omit<DailyClimate, 'id'>): DailyClimate {
+    const climate: DailyClimate = {
+      ...data,
+      id: this.generateId(),
+    };
+    this._climates.update((prev) => [...prev, climate]);
+    return climate;
+  }
+
+  updateClimate(id: string, changes: Partial<Omit<DailyClimate, 'id'>>): void {
+    this._climates.update((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...changes } : c))
+    );
+  }
+
+  removeClimate(id: string): void {
+    this._climates.update((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  getClimateSummary(day: number): string {
+    const climate = this.getClimateForDay(day);
+    if (!climate) return '第 ' + day + ' 天：暂无气候数据';
+    
+    const weatherMap: Record<WeatherType, string> = {
+      sunny: '晴',
+      cloudy: '多云',
+      rainy: '雨',
+      snowy: '雪',
+      hot_wave: '热浪',
+      cool: '凉爽',
+      freezing: '严寒',
+    };
+    
+    const seasonMap: Record<SeasonType, string> = {
+      spring: '春',
+      summer: '夏',
+      autumn: '秋',
+      winter: '冬',
+    };
+
+    let result = `第 ${day} 天：${seasonMap[climate.season]}季 · ${climate.temperature}°C · ${weatherMap[climate.weather]}`;
+    if (climate.hasHeatWarning) {
+      const levelMap = { yellow: '黄色', orange: '橙色', red: '红色' };
+      result += ` · ⚠${levelMap[climate.heatWarningLevel || 'yellow']}高温预警`;
+    }
+    if (climate.seasonEvent) {
+      result += ` · ${climate.seasonEvent}`;
+    }
+    return result;
+  }
+
   private generateLogHash(log: DailyLog): string {
     const hashContent = JSON.stringify({
       day: log.day,
+      climate: log.climate,
+      climateImpact: log.climateImpact,
       cellarStocks: log.cellarStocks,
       jianStocks: log.jianStocks,
       transitStocks: log.transitStocks,
@@ -79,6 +250,7 @@ export class SchedulingService {
       dailyLosses: log.dailyLosses,
       multiStageUpdates: log.multiStageUpdates,
       transitOccupancies: log.transitOccupancies,
+      weatherDelays: log.weatherDelays,
     });
     let hash = 0;
     for (let i = 0; i < hashContent.length; i++) {
@@ -108,7 +280,12 @@ export class SchedulingService {
     if (!node || node.type === 'cellar') return Number.MAX_SAFE_INTEGER;
     const occupied = this.getTotalOccupiedAmountAtNode(nodeId, day);
     const currentStock = node.currentStock;
-    return node.maxCapacity - currentStock - occupied;
+    
+    const climate = this.getClimateForDay(day);
+    const impact = this.calculateClimateImpact(climate);
+    const effectiveCapacity = Math.floor(node.maxCapacity * impact.capacityMultiplier);
+    
+    return effectiveCapacity - currentStock - occupied;
   }
 
   private refundShipmentStock(shipment: Shipment): void {
@@ -1059,17 +1236,28 @@ export class SchedulingService {
       const dayConsumptions = this._consumptionPlans().filter(
         (p) => p.day === day
       );
+      const climate = this.getClimateForDay(day);
+      const impact = this.calculateClimateImpact(climate);
+      
       for (const plan of dayConsumptions) {
         const jian = this._jians().find((j) => j.id === plan.jianId);
         if (!jian) continue;
 
+        const adjustedDemand = Math.floor(plan.amount * impact.demandMultiplier);
         const simulatedResult = this.simulateJianStockAtDay(jian.id, day);
-        if (simulatedResult < plan.amount) {
+        if (simulatedResult < adjustedDemand) {
           return {
             hasRisk: true,
-            reason: `第 ${day} 天 [${jian.name}] 需要 ${plan.amount} 单位冰，但预测库存仅有 ${simulatedResult.toFixed(0)} 单位，存在超配风险！`,
+            reason: `第 ${day} 天 [${jian.name}] 气候影响后需求 ${adjustedDemand} 单位冰，但预测库存仅有 ${simulatedResult.toFixed(0)} 单位，存在超配风险！`,
           };
         }
+      }
+      
+      if (climate?.hasHeatWarning && climate.heatWarningLevel === 'red') {
+        return {
+          hasRisk: true,
+          reason: `第 ${day} 天发布红色高温预警（${climate.temperature}°C），存在损耗失控风险，请注意调整计划！`,
+        };
       }
     }
 
@@ -1084,7 +1272,10 @@ export class SchedulingService {
     const consumptionByDay = new Map<number, number>();
     for (const p of this._consumptionPlans()) {
       if (p.jianId === jianId) {
-        consumptionByDay.set(p.day, (consumptionByDay.get(p.day) || 0) + p.amount);
+        const climate = this.getClimateForDay(p.day);
+        const impact = this.calculateClimateImpact(climate);
+        const adjustedAmount = Math.floor(p.amount * impact.demandMultiplier);
+        consumptionByDay.set(p.day, (consumptionByDay.get(p.day) || 0) + adjustedAmount);
       }
     }
 
@@ -1093,7 +1284,9 @@ export class SchedulingService {
       .sort((a, b) => a.arrivalDay - b.arrivalDay);
 
     for (let day = 1; day <= targetDay; day++) {
-      const loss = Math.floor(stock * jian.dailyLossRate);
+      const climate = this.getClimateForDay(day);
+      const impact = this.calculateClimateImpact(climate);
+      const loss = Math.floor(stock * jian.dailyLossRate * impact.lossRateMultiplier);
       stock = Math.max(0, stock - loss);
 
       for (const shipment of incomingShipments) {
@@ -1126,6 +1319,8 @@ export class SchedulingService {
       failedMultiStageId: null,
       replayConsistencyError: null,
       replayConsistencyPassed: false,
+      heatWarningPause: false,
+      heatWarningReason: null,
     }));
     this._shipments.update((prev) =>
       prev.map((s) => ({ ...s, status: 'pending' as const }))
@@ -1171,6 +1366,8 @@ export class SchedulingService {
       isPaused: false,
       isOverAllocated: false,
       overAllocationReason: null,
+      heatWarningPause: false,
+      heatWarningReason: null,
     }));
 
     this.startTimer();
@@ -1231,7 +1428,36 @@ export class SchedulingService {
     const nextDay = currentState.currentDay + 1;
     const log = this.createDailyLog(nextDay);
 
+    const climate = this.getClimateForDay(nextDay);
+    if (climate?.hasHeatWarning && climate.heatWarningLevel === 'red') {
+      const heatWarningReason = `第 ${nextDay} 天发布红色高温预警，气温 ${climate.temperature}°C，损耗失控风险极高，调度已自动暂停！`;
+      log.warnings.push(heatWarningReason);
+      log.errors.push(heatWarningReason);
+      this._state.update((s) => ({
+        ...s,
+        currentDay: nextDay,
+        logs: [...s.logs, log],
+        isPaused: true,
+        heatWarningPause: true,
+        heatWarningReason,
+        pauseReason: heatWarningReason,
+        warnings: [...s.warnings, heatWarningReason].filter(
+          (v, i, a) => a.indexOf(v) === i
+        ),
+      }));
+      this.stopTimer();
+      return;
+    }
+
+    if (climate?.hasHeatWarning) {
+      const levelMap = { yellow: '黄色', orange: '橙色', red: '红色' };
+      log.warnings.push(
+        `第 ${nextDay} 天发布${levelMap[climate.heatWarningLevel || 'yellow']}高温预警，气温 ${climate.temperature}°C，请注意损耗增加`
+      );
+    }
+
     this.processDailyLoss(nextDay, log);
+    this.processWeatherDelays(nextDay, log);
     this.processMultiStageShipments(nextDay, log);
     this.processShipmentTransits(nextDay, log);
     this.processDeliveries(nextDay, log);
@@ -1267,8 +1493,13 @@ export class SchedulingService {
     const transitStocks: { [id: string]: number } = {};
     for (const t of this._transitNodes()) transitStocks[t.id] = t.currentStock;
 
+    const climate = this.getClimateForDay(day);
+    const climateImpact = this.calculateClimateImpact(climate);
+
     return {
       day,
+      climate: climate ? { ...climate } : undefined,
+      climateImpact: { ...climateImpact },
       cellarStocks,
       jianStocks,
       transitStocks,
@@ -1280,41 +1511,93 @@ export class SchedulingService {
       errors: [],
       multiStageUpdates: [],
       transitOccupancies: [],
+      weatherDelays: [],
       logHash: '',
     };
   }
 
   private processDailyLoss(day: number, log: DailyLog): void {
+    const impact = log.climateImpact || { lossRateMultiplier: 1, travelTimeMultiplier: 1, capacityMultiplier: 1, demandMultiplier: 1 };
+
     for (const cellar of this._cellars()) {
-      const loss = Math.floor(cellar.currentStock * cellar.dailyLossRate);
+      const baseLoss = cellar.currentStock * cellar.dailyLossRate;
+      const adjustedLoss = baseLoss * impact.lossRateMultiplier;
+      const loss = Math.floor(adjustedLoss);
+      const climateBonus = loss - Math.floor(baseLoss);
       if (loss > 0) {
         this.updateCellar(cellar.id, {
           currentStock: Math.max(0, cellar.currentStock - loss),
         });
-        log.dailyLosses.push({ nodeId: cellar.id, amount: loss });
+        log.dailyLosses.push({ nodeId: cellar.id, amount: loss, climateBonus });
         log.cellarStocks[cellar.id] = Math.max(0, cellar.currentStock - loss);
       }
     }
 
     for (const jian of this._jians()) {
-      const loss = Math.floor(jian.currentStock * jian.dailyLossRate);
+      const baseLoss = jian.currentStock * jian.dailyLossRate;
+      const adjustedLoss = baseLoss * impact.lossRateMultiplier;
+      const loss = Math.floor(adjustedLoss);
+      const climateBonus = loss - Math.floor(baseLoss);
       if (loss > 0) {
         this.updateJian(jian.id, {
           currentStock: Math.max(0, jian.currentStock - loss),
         });
-        log.dailyLosses.push({ nodeId: jian.id, amount: loss });
+        log.dailyLosses.push({ nodeId: jian.id, amount: loss, climateBonus });
         log.jianStocks[jian.id] = Math.max(0, jian.currentStock - loss);
       }
     }
 
     for (const transit of this._transitNodes()) {
-      const loss = Math.floor(transit.currentStock * transit.dailyLossRate);
+      const baseLoss = transit.currentStock * transit.dailyLossRate;
+      const adjustedLoss = baseLoss * impact.lossRateMultiplier;
+      const loss = Math.floor(adjustedLoss);
+      const climateBonus = loss - Math.floor(baseLoss);
       if (loss > 0) {
         this.updateTransitNode(transit.id, {
           currentStock: Math.max(0, transit.currentStock - loss),
         });
-        log.dailyLosses.push({ nodeId: transit.id, amount: loss });
+        log.dailyLosses.push({ nodeId: transit.id, amount: loss, climateBonus });
         log.transitStocks[transit.id] = Math.max(0, transit.currentStock - loss);
+      }
+    }
+  }
+
+  private processWeatherDelays(day: number, log: DailyLog): void {
+    const impact = log.climateImpact || { lossRateMultiplier: 1, travelTimeMultiplier: 1, capacityMultiplier: 1, demandMultiplier: 1 };
+    if (impact.travelTimeMultiplier <= 1) return;
+
+    const weatherMap: Record<string, string> = {
+      rainy: '雨天',
+      snowy: '雪天',
+      hot_wave: '热浪',
+      freezing: '严寒',
+    };
+    const weatherDesc = log.climate ? weatherMap[log.climate.weather] || '恶劣天气' : '恶劣天气';
+
+    const inTransitShipments = this._shipments().filter(
+      (s) => s.status === 'in_transit' && !s.multiStageId
+    );
+
+    for (const shipment of inTransitShipments) {
+      const originalArrivalDay = shipment.arrivalDay;
+      const delayDays = Math.ceil(originalArrivalDay * (impact.travelTimeMultiplier - 1));
+      if (delayDays > 0 && day >= shipment.startDay && day < originalArrivalDay) {
+        const newArrivalDay = originalArrivalDay + delayDays;
+        this._shipments.update((prev) =>
+          prev.map((s) =>
+            s.id === shipment.id
+              ? { ...s, arrivalDay: newArrivalDay, lossAmount: Math.floor(s.amount * (s.lossAmount / s.amount + impact.lossRateMultiplier * 0.05)) }
+              : s
+          )
+        );
+        log.weatherDelays.push({
+          shipmentId: shipment.id,
+          delayDays,
+          reason: `${weatherDesc}导致运输延误 ${delayDays} 天`,
+        });
+        log.warnings.push(
+          `第 ${day} 天: 运输 [${shipment.id}] 因${weatherDesc}延误 ${delayDays} 天，预计第 ${newArrivalDay} 天到达`
+        );
       }
     }
   }
@@ -1395,6 +1678,7 @@ export class SchedulingService {
   }
 
   private processConsumptions(day: number, log: DailyLog): void {
+    const impact = log.climateImpact || { lossRateMultiplier: 1, travelTimeMultiplier: 1, capacityMultiplier: 1, demandMultiplier: 1 };
     const todayPlans = this._consumptionPlans().filter((p) => p.day === day);
     for (const plan of todayPlans) {
       const jian = this._jians().find((j) => j.id === plan.jianId);
@@ -1408,33 +1692,40 @@ export class SchedulingService {
         continue;
       }
 
-      if (jian.currentStock < plan.amount) {
+      const adjustedAmount = Math.floor(plan.amount * impact.demandMultiplier);
+
+      if (jian.currentStock < adjustedAmount) {
         log.consumptions.push({
           jianId: plan.jianId,
-          amount: plan.amount,
+          amount: adjustedAmount,
           success: false,
-          reason: '库存不足，无法取冰',
+          reason: `库存不足，无法取冰（气候影响后需求调整为 ${adjustedAmount}）`,
         });
         log.errors.push(
-          `第 ${day} 天: [${jian.name}] 库存不足，计划取用 ${plan.amount}，实际库存 ${jian.currentStock}`
+          `第 ${day} 天: [${jian.name}] 库存不足，计划取用 ${plan.amount}，气候影响后需求 ${adjustedAmount}，实际库存 ${jian.currentStock}`
         );
         this._state.update((s) => ({
           ...s,
           isOverAllocated: true,
-          overAllocationReason: `第 ${day} 天 [${jian.name}] 库存不足！`,
+          overAllocationReason: `第 ${day} 天 [${jian.name}] 库存不足！气候导致需求增加，计划无法按时完成`,
           isPaused: true,
         }));
         this.stopTimer();
       } else {
         this.updateJian(jian.id, {
-          currentStock: jian.currentStock - plan.amount,
+          currentStock: jian.currentStock - adjustedAmount,
         });
-        log.jianStocks[jian.id] = jian.currentStock - plan.amount;
+        log.jianStocks[jian.id] = jian.currentStock - adjustedAmount;
         log.consumptions.push({
           jianId: plan.jianId,
-          amount: plan.amount,
+          amount: adjustedAmount,
           success: true,
         });
+        if (impact.demandMultiplier !== 1) {
+          log.warnings.push(
+            `第 ${day} 天: [${jian.name}] 因气候原因需求从 ${plan.amount} 调整为 ${adjustedAmount}`
+          );
+        }
       }
     }
   }
@@ -1487,6 +1778,8 @@ export class SchedulingService {
       failedMultiStageId: null,
       replayConsistencyError: null,
       replayConsistencyPassed: false,
+      heatWarningPause: false,
+      heatWarningReason: null,
     }));
   }
 
@@ -1674,6 +1967,7 @@ export class SchedulingService {
       consumptionPlans: JSON.parse(JSON.stringify(this._consumptionPlans())),
       shipments: JSON.parse(JSON.stringify(this._shipments())),
       multiStageShipments: JSON.parse(JSON.stringify(this._multiStageShipments())),
+      climates: JSON.parse(JSON.stringify(this._climates())),
       totalDays: this._state().totalDays,
     };
   }
@@ -1687,6 +1981,7 @@ export class SchedulingService {
     this._consumptionPlans.set(config.consumptionPlans);
     this._shipments.set(config.shipments);
     this._multiStageShipments.set(config.multiStageShipments || []);
+    this._climates.set(config.climates || []);
     this.setTotalDays(config.totalDays);
   }
 
@@ -1931,6 +2226,71 @@ export class SchedulingService {
       nodeIds: [cellar1.id, transit1.id, transit2.id, jian1.id],
       startDay: 25,
     });
+
+    for (let day = 1; day <= 30; day++) {
+      let season: SeasonType = 'spring';
+      let temperature = 15 + Math.sin(day / 5) * 8;
+      let weather: WeatherType = 'sunny';
+      let hasHeatWarning = false;
+      let heatWarningLevel: 'yellow' | 'orange' | 'red' | undefined = undefined;
+      let seasonEvent: string | undefined = undefined;
+
+      if (day <= 10) {
+        season = 'spring';
+        temperature = 12 + day * 0.8;
+        weather = day % 4 === 0 ? 'rainy' : 'cloudy';
+      } else if (day <= 20) {
+        season = 'summer';
+        temperature = 25 + (day - 10) * 1.2;
+        weather = day % 5 === 0 ? 'cloudy' : 'sunny';
+        
+        if (day === 15) {
+          temperature = 36;
+          hasHeatWarning = true;
+          heatWarningLevel = 'yellow';
+          seasonEvent = '初伏';
+        }
+        if (day === 18) {
+          temperature = 38;
+          hasHeatWarning = true;
+          heatWarningLevel = 'orange';
+        }
+      } else {
+        season = 'summer';
+        temperature = 32 + Math.sin(day / 3) * 5;
+        weather = day % 3 === 0 ? 'hot_wave' : 'sunny';
+        
+        if (day === 23) {
+          temperature = 40;
+          hasHeatWarning = true;
+          heatWarningLevel = 'red';
+          seasonEvent = '中伏·极端高温';
+        }
+        if (day === 27) {
+          temperature = 37;
+          hasHeatWarning = true;
+          heatWarningLevel = 'orange';
+        }
+        if (day === 28) {
+          temperature = 28;
+          weather = 'rainy';
+          seasonEvent = '雷阵雨降温';
+        }
+      }
+
+      temperature = Math.round(temperature * 10) / 10;
+
+      this.addClimate({
+        day,
+        temperature,
+        weather,
+        season,
+        seasonEvent,
+        hasHeatWarning,
+        heatWarningLevel,
+        description: seasonEvent || '',
+      });
+    }
 
     this.setTotalDays(30);
   }

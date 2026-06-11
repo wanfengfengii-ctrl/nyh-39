@@ -1,7 +1,7 @@
 import { Component, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SchedulingService } from '../../services/scheduling.service';
-import { DailyLog } from '../../models/ice.models';
+import { DailyLog, WeatherType, SeasonType, DailyClimate } from '../../models/ice.models';
 
 @Component({
   selector: 'app-stats-log',
@@ -19,11 +19,44 @@ export class StatsLogComponent {
   readonly jians = computed(() => this.schedulingService.jians());
   readonly transitNodes = computed(() => this.schedulingService.transitNodes());
   readonly shipments = computed(() => this.schedulingService.shipments());
+  readonly climates = computed(() => this.schedulingService.climates());
   readonly logs = computed(() => this.state().logs);
   readonly latestLog = computed<DailyLog | null>(() => {
     const logs = this.logs();
     return logs.length > 0 ? logs[logs.length - 1] : null;
   });
+
+  readonly currentClimate = computed(() => {
+    const day = this.state().currentDay;
+    return this.schedulingService.getClimateForDay(day);
+  });
+
+  readonly currentClimateImpact = computed(() => {
+    return this.schedulingService.calculateClimateImpact(this.currentClimate());
+  });
+
+  readonly totalClimateBonusLoss = computed(() => {
+    const log = this.latestLog();
+    if (!log) return 0;
+    return log.dailyLosses.reduce((sum, l) => sum + (l.climateBonus || 0), 0);
+  });
+
+  readonly weatherIcons: Record<WeatherType, string> = {
+    sunny: '☀️',
+    cloudy: '⛅',
+    rainy: '🌧️',
+    snowy: '❄️',
+    hot_wave: '🔥',
+    cool: '🍃',
+    freezing: '🥶',
+  };
+
+  readonly seasonNames: Record<SeasonType, string> = {
+    spring: '春',
+    summer: '夏',
+    autumn: '秋',
+    winter: '冬',
+  };
 
   readonly totalCellarStock = computed(() =>
     this.cellars().reduce((sum, c) => sum + c.currentStock, 0)
@@ -213,5 +246,45 @@ export class StatsLogComponent {
 
   roundNumber(num: number): number {
     return Math.round(num);
+  }
+
+  getWeatherIcon(weather: WeatherType): string {
+    return this.weatherIcons[weather] || '🌡️';
+  }
+
+  getSeasonName(season: SeasonType): string {
+    return this.seasonNames[season] || season;
+  }
+
+  getClimateForLog(log: DailyLog): DailyClimate | null {
+    return log.climate || null;
+  }
+
+  getClimateImpactForLog(log: DailyLog): { lossRateMultiplier: number; demandMultiplier: number; travelTimeMultiplier: number; capacityMultiplier: number } | null {
+    return log.climateImpact || null;
+  }
+
+  getHeatWarningLevelColor(level?: string): string {
+    switch (level) {
+      case 'red': return '#f44336';
+      case 'orange': return '#ff9800';
+      case 'yellow': return '#ffc107';
+      default: return '#999';
+    }
+  }
+
+  getTotalClimateBonusForLog(log: DailyLog): number {
+    return log.dailyLosses.reduce((sum, l) => sum + (l.climateBonus || 0), 0);
+  }
+
+  getWeatherDelaysForLog(log: DailyLog): Array<{ shipmentId: string; delayDays: number }> {
+    return log.weatherDelays || [];
+  }
+
+  hasClimateImpact(log: DailyLog): boolean {
+    const impact = log.climateImpact;
+    if (!impact) return false;
+    return impact.lossRateMultiplier !== 1 || impact.demandMultiplier !== 1
+      || impact.travelTimeMultiplier !== 1 || impact.capacityMultiplier !== 1;
   }
 }

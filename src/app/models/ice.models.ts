@@ -1,3 +1,25 @@
+export type WeatherType = 'sunny' | 'cloudy' | 'rainy' | 'snowy' | 'hot_wave' | 'cool' | 'freezing';
+export type SeasonType = 'spring' | 'summer' | 'autumn' | 'winter';
+
+export interface DailyClimate {
+  id: string;
+  day: number;
+  temperature: number;
+  weather: WeatherType;
+  season: SeasonType;
+  seasonEvent?: string;
+  hasHeatWarning: boolean;
+  heatWarningLevel?: 'yellow' | 'orange' | 'red';
+  description?: string;
+}
+
+export interface ClimateImpact {
+  lossRateMultiplier: number;
+  travelTimeMultiplier: number;
+  capacityMultiplier: number;
+  demandMultiplier: number;
+}
+
 export type NodeType = 'cellar' | 'jian' | 'transit';
 
 export interface BaseNode {
@@ -103,17 +125,20 @@ export interface MultiStageShipment {
 
 export interface DailyLog {
   day: number;
+  climate?: DailyClimate;
+  climateImpact?: ClimateImpact;
   cellarStocks: { [cellarId: string]: number };
   jianStocks: { [jianId: string]: number };
   transitStocks: { [nodeId: string]: number };
   activeShipments: Shipment[];
   deliveries: Shipment[];
   consumptions: { jianId: string; amount: number; success: boolean; reason?: string }[];
-  dailyLosses: { nodeId: string; amount: number }[];
+  dailyLosses: { nodeId: string; amount: number; climateBonus?: number }[];
   warnings: string[];
   errors: string[];
   multiStageUpdates: { multiStageId: string; stageIndex: number; status: string }[];
   transitOccupancies: { occupancyId: string; nodeId: string; amount: number; status: string }[];
+  weatherDelays: { shipmentId: string; delayDays: number; reason: string }[];
   logHash: string;
 }
 
@@ -133,6 +158,8 @@ export interface SchedulingState {
   failedMultiStageId: string | null;
   replayConsistencyError: string | null;
   replayConsistencyPassed: boolean;
+  heatWarningPause: boolean;
+  heatWarningReason: string | null;
 }
 
 export interface SchedulingConfig {
@@ -143,5 +170,6 @@ export interface SchedulingConfig {
   consumptionPlans: DailyConsumptionPlan[];
   shipments: Shipment[];
   multiStageShipments: MultiStageShipment[];
+  climates: DailyClimate[];
   totalDays: number;
 }

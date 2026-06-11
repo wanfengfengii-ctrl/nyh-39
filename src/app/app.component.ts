@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NodeConfigComponent } from './components/node-config/node-config.component';
 import { PlanConfigComponent } from './components/plan-config/plan-config.component';
+import { WeatherConfigComponent } from './components/weather-config/weather-config.component';
 import { NetworkVisualizationComponent } from './components/network-visualization/network-visualization.component';
 import { TimelineControlComponent } from './components/timeline-control/timeline-control.component';
 import { StatsLogComponent } from './components/stats-log/stats-log.component';
@@ -14,6 +15,7 @@ import { SchedulingService } from './services/scheduling.service';
     CommonModule,
     NodeConfigComponent,
     PlanConfigComponent,
+    WeatherConfigComponent,
     NetworkVisualizationComponent,
     TimelineControlComponent,
     StatsLogComponent,

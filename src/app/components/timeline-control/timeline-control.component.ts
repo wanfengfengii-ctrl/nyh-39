@@ -2,6 +2,7 @@ import { Component, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SchedulingService } from '../../services/scheduling.service';
+import { WeatherType, SeasonType, DailyClimate } from '../../models/ice.models';
 
 @Component({
   selector: 'app-timeline-control',
@@ -16,12 +17,67 @@ export class TimelineControlComponent {
   readonly state = computed(() => this.schedulingService.state());
   readonly totalDays = computed(() => this.state().totalDays);
   readonly speedOptions = [0.5, 1, 2, 4, 8];
+  readonly climates = computed(() => this.schedulingService.climates());
+
+  readonly currentClimate = computed(() => {
+    const day = this.state().currentDay;
+    return this.schedulingService.getClimateForDay(day);
+  });
+
+  readonly currentClimateImpact = computed(() => {
+    return this.schedulingService.calculateClimateImpact(this.currentClimate());
+  });
+
+  readonly heatWarningDays = computed(() => {
+    return this.climates()
+      .filter(c => c.hasHeatWarning)
+      .map(c => c.day);
+  });
+
+  readonly weatherIcons: Record<WeatherType, string> = {
+    sunny: '☀️',
+    cloudy: '⛅',
+    rainy: '🌧️',
+    snowy: '❄️',
+    hot_wave: '🔥',
+    cool: '🍃',
+    freezing: '🥶',
+  };
+
+  readonly seasonNames: Record<SeasonType, string> = {
+    spring: '春',
+    summer: '夏',
+    autumn: '秋',
+    winter: '冬',
+  };
 
   constructor(private schedulingService: SchedulingService) {}
 
   get progressPercent(): number {
     if (this.totalDays() === 0) return 0;
     return (this.state().currentDay / this.totalDays()) * 100;
+  }
+
+  getWeatherIcon(weather: WeatherType): string {
+    return this.weatherIcons[weather] || '🌡️';
+  }
+
+  getSeasonName(season: SeasonType): string {
+    return this.seasonNames[season] || season;
+  }
+
+  getHeatWarningLevelColor(level?: string): string {
+    switch (level) {
+      case 'red': return '#f44336';
+      case 'orange': return '#ff9800';
+      case 'yellow': return '#ffc107';
+      default: return '#999';
+    }
+  }
+
+  getClimateSummary(climate: DailyClimate | null): string {
+    if (!climate) return '暂无气候数据';
+    return `${this.getSeasonName(climate.season)}季 · ${climate.temperature}°C · ${this.getWeatherIcon(climate.weather)}`;
   }
 
   start(): void {
@@ -89,5 +145,14 @@ export class TimelineControlComponent {
       markers.push(total);
     }
     return markers;
+  }
+
+  getHeatWarningMarkerStyle(day: number): { [key: string]: string } {
+    const climate = this.climates().find(c => c.day === day);
+    const color = climate ? this.getHeatWarningLevelColor(climate.heatWarningLevel) : '#ffc107';
+    return {
+      left: `${(day / this.totalDays()) * 100}%`,
+      backgroundColor: color,
+    };
   }
 }

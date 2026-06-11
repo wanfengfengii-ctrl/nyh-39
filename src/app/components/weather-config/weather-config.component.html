@@ -1,0 +1,116 @@
+<div class="panel weather-panel">
+  <div class="panel-header">
+    <h3 class="panel-title">🌤️ 气候与季节配置</h3>
+    <div class="header-actions">
+      <span class="climate-count">已配置 {{ climates().length }} 天</span>
+    </div>
+  </div>
+
+  <div class="action-bar">
+    <button class="btn-primary" (click)="toggleAddClimate()">
+      {{ showAddClimate() ? '取消' : '+ 添加天气' }}
+    </button>
+    <button class="btn-secondary" (click)="generateBatchClimates()">
+      🔄 批量生成
+    </button>
+    <button class="btn-danger" (click)="clearAllClimates()">
+      🗑️ 全部清除
+    </button>
+  </div>
+
+  @if (showAddClimate()) {
+    <div class="add-form climate-form">
+      <h4>{{ editingClimateId() ? '编辑气候配置' : '新增气候配置' }}</h4>
+      <div class="form-grid">
+        <label>日期
+          <input type="number" [(ngModel)]="newClimate.day" min="1" [max]="state().totalDays">
+        </label>
+        <label>气温 (°C)
+          <input type="number" [(ngModel)]="newClimate.temperature" step="0.5">
+        </label>
+        <label>季节
+          <select [(ngModel)]="newClimate.season">
+            @for (s of seasonOptions; track s.value) {
+              <option [value]="s.value">{{ s.label }}</option>
+            }
+          </select>
+        </label>
+        <label>天气
+          <select [(ngModel)]="newClimate.weather">
+            @for (w of weatherOptions; track w.value) {
+              <option [value]="w.value">{{ w.icon }} {{ w.label }}</option>
+            }
+          </select>
+        </label>
+        <label class="full-width">季节事件
+          <input type="text" [(ngModel)]="newClimate.seasonEvent" placeholder="如：初伏、冬至、雷阵雨降温等（可选）">
+        </label>
+        <label class="checkbox-label full-width">
+          <input type="checkbox" [(ngModel)]="newClimate.hasHeatWarning">
+          启用高温预警
+        </label>
+        @if (newClimate.hasHeatWarning) {
+          <label>预警级别
+            <select [(ngModel)]="newClimate.heatWarningLevel">
+              @for (l of heatWarningLevels; track l.value) {
+                <option [value]="l.value">{{ l.label }}</option>
+              }
+            </select>
+          </label>
+        }
+        <label class="full-width">说明
+          <input type="text" [(ngModel)]="newClimate.description" placeholder="可选描述">
+        </label>
+      </div>
+
+      <div class="impact-preview">
+        <strong>影响预览：</strong>
+        <span>{{ getClimateImpactPreview(newClimate.day) }}</span>
+      </div>
+
+      <button class="btn-primary btn-block" (click)="saveClimate()">
+        {{ editingClimateId() ? '保存修改' : '确认添加' }}
+      </button>
+    </div>
+  }
+
+  <div class="climate-list">
+    @for (climate of sortedClimates(); track climate.id) {
+      <div class="climate-item" [class.heat-warning]="climate.hasHeatWarning">
+        <div class="climate-main">
+          <div class="climate-day">
+            <span class="day-badge">第 {{ climate.day }} 天</span>
+            <span class="season-tag">{{ getSeasonLabel(climate.season) }}</span>
+          </div>
+          <div class="climate-weather">
+            <span class="weather-icon">{{ getWeatherIcon(climate.weather) }}</span>
+            <span class="weather-info">
+              <span class="temperature">{{ climate.temperature }}°C</span>
+              <span class="weather-label">{{ getWeatherLabel(climate.weather) }}</span>
+            </span>
+          </div>
+          @if (climate.seasonEvent) {
+            <div class="season-event">📅 {{ climate.seasonEvent }}</div>
+          }
+          @if (climate.hasHeatWarning) {
+            <div class="heat-warning-badge" [style.backgroundColor]="getHeatWarningColor(climate.heatWarningLevel)">
+              ⚠️ {{ getHeatWarningLabel(climate.heatWarningLevel) }}
+            </div>
+          }
+        </div>
+        <div class="climate-impact">
+          <span class="impact-text">{{ getClimateImpactPreview(climate.day) }}</span>
+        </div>
+        <div class="climate-actions">
+          <button class="btn-edit" (click)="editClimate(climate)">编辑</button>
+          <button class="btn-danger" (click)="removeClimate(climate.id)">删除</button>
+        </div>
+      </div>
+    }
+    @empty {
+      <div class="empty-hint">
+        暂无气候配置，点击"添加天气"或"批量生成"来创建气候数据
+      </div>
+    }
+  </div>
+</div>

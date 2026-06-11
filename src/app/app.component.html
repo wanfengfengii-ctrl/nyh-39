@@ -9,6 +9,7 @@
         <span class="feature-badge">节点配置</span>
         <span class="feature-badge">运输调度</span>
         <span class="feature-badge">损耗仿真</span>
+        <span class="feature-badge">气候影响</span>
         <span class="feature-badge">时间轴控制</span>
         <span class="feature-badge">历史回放</span>
       </div>
@@ -27,6 +28,7 @@
     <section class="config-section">
       <app-node-config />
       <app-plan-config />
+      <app-weather-config />
     </section>
 
     <section class="stats-section">
@@ -44,6 +46,8 @@
         <span>• 删除冰窖同步清除关联计划</span>
         <span>• 损耗率不得小于0</span>
         <span>• 超配风险将暂停调度</span>
+        <span>• 高温预警将自动暂停调度</span>
+        <span>• 气候因素动态影响损耗与需求</span>
       </div>
       <div class="copyright">Angular 17 + TypeScript · 古冰窖数字化仿真</div>
     </div>

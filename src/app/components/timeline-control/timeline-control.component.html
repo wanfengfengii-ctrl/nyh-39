@@ -7,9 +7,11 @@
           [class.paused]="state().isPaused"
           [class.overallocated]="state().isOverAllocated"
           [class.replaying]="state().isReplaying"
+          [class.heat-warning]="state().heatWarningPause"
         ></span>
         <span class="status-text">
           @if (state().isReplaying) { 回放中 }
+          @else if (state().heatWarningPause) { 高温暂停 }
           @else if (state().isOverAllocated) { 超配暂停 }
           @else if (state().isPaused) { 已暂停 }
           @else if (state().isRunning) { 运行中 }
@@ -21,6 +23,18 @@
         <span class="day-number">{{ state().currentDay }}</span>
         <span class="day-label">/ {{ state().totalDays }} 日</span>
       </div>
+      @if (currentClimate()) {
+        <div class="weather-display">
+          <span class="weather-icon">{{ getWeatherIcon(currentClimate()!.weather) }}</span>
+          <span class="weather-temp">{{ currentClimate()!.temperature }}°C</span>
+          <span class="weather-season">{{ getSeasonName(currentClimate()!.season) }}季</span>
+          @if (currentClimate()!.hasHeatWarning) {
+            <span class="heat-badge" [style.backgroundColor]="getHeatWarningLevelColor(currentClimate()!.heatWarningLevel)">
+              ⚠ 高温
+            </span>
+          }
+        </div>
+      }
     </div>
 
     <div class="control-group button-group">
@@ -34,13 +48,13 @@
           ⏸ 暂停
         </button>
       }
-      @if (state().isPaused && !state().isOverAllocated) {
+      @if (state().isPaused && !state().isOverAllocated && !state().heatWarningPause) {
         <button class="btn btn-success" (click)="resume()">
           ▶ 继续
         </button>
       }
-      @if (state().isOverAllocated) {
-        <button class="btn btn-warning" (click)="start()" title="忽略超配继续">
+      @if (state().isOverAllocated || state().heatWarningPause) {
+        <button class="btn btn-warning" (click)="start()" title="忽略警告继续">
           ▶ 强制继续
         </button>
       }
@@ -95,7 +109,50 @@
         </div>
       }
     </div>
+    <div class="heat-warning-markers">
+      @for (day of heatWarningDays(); track day) {
+        <div class="heat-warning-marker" [ngStyle]="getHeatWarningMarkerStyle(day)" [title]="'第' + day + '天高温预警'">
+        </div>
+      }
+    </div>
   </div>
+
+  @if (currentClimate() && state().isRunning) {
+    <div class="climate-impact-bar">
+      <span class="impact-label">气候影响：</span>
+      @if (currentClimateImpact().lossRateMultiplier !== 1) {
+        <span class="impact-item" [class.negative]="currentClimateImpact().lossRateMultiplier > 1">
+          损耗 {{ currentClimateImpact().lossRateMultiplier > 1 ? '↑' : '↓' }} {{ ((currentClimateImpact().lossRateMultiplier - 1) * 100).toFixed(0) }}%
+        </span>
+      }
+      @if (currentClimateImpact().demandMultiplier !== 1) {
+        <span class="impact-item" [class.negative]="currentClimateImpact().demandMultiplier > 1">
+          需求 {{ currentClimateImpact().demandMultiplier > 1 ? '↑' : '↓' }} {{ ((currentClimateImpact().demandMultiplier - 1) * 100).toFixed(0) }}%
+        </span>
+      }
+      @if (currentClimateImpact().travelTimeMultiplier !== 1) {
+        <span class="impact-item" [class.negative]="currentClimateImpact().travelTimeMultiplier > 1">
+          运输 {{ currentClimateImpact().travelTimeMultiplier > 1 ? '↑' : '↓' }} {{ ((currentClimateImpact().travelTimeMultiplier - 1) * 100).toFixed(0) }}%
+        </span>
+      }
+      @if (currentClimateImpact().capacityMultiplier !== 1) {
+        <span class="impact-item" [class.negative]="currentClimateImpact().capacityMultiplier < 1">
+          容量 {{ currentClimateImpact().capacityMultiplier > 1 ? '↑' : '↓' }} {{ ((currentClimateImpact().capacityMultiplier - 1) * 100).toFixed(0) }}%
+        </span>
+      }
+      @if (currentClimate()?.seasonEvent) {
+        <span class="season-event-badge">📅 {{ currentClimate()?.seasonEvent }}</span>
+      }
+    </div>
+  }
+
+  @if (state().heatWarningReason) {
+    <div class="alert alert-heat">
+      <strong>🔥 高温预警暂停！</strong>
+      <p>{{ state().heatWarningReason }}</p>
+      <small>极端高温导致损耗失控风险，调度已自动暂停。可点击"强制继续"忽略此警告</small>
+    </div>
+  }
 
   @if (state().overAllocationReason) {
     <div class="alert alert-danger">
@@ -105,7 +162,7 @@
     </div>
   }
 
-  @if (state().pauseReason && !state().overAllocationReason) {
+  @if (state().pauseReason && !state().overAllocationReason && !state().heatWarningReason) {
     <div class="alert alert-warning">
       <strong>⏸ 调度已暂停</strong>
       <p>{{ state().pauseReason }}</p>
@@ -116,7 +173,7 @@
   @if (state().isReplaying) {
     <div class="alert alert-info">
       <strong>↻ 回放模式</strong>
-      <p>正在回放原始调度记录，结果与原记录保持一致</p>
+      <p>正在回放原始调度记录，天气事件与影响结果与原记录保持一致</p>
     </div>
   }
 
@@ -131,7 +188,7 @@
   @if (state().replayConsistencyPassed && !state().isReplaying) {
     <div class="alert alert-success">
       <strong>✅ 回放一致性验证通过</strong>
-      <p>回放结果与原调度记录完全一致</p>
+      <p>回放结果与原调度记录完全一致，天气事件及影响结果完全匹配</p>
     </div>
   }
 </div>

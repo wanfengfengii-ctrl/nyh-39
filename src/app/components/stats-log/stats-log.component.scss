@@ -89,6 +89,11 @@
     background: linear-gradient(135deg, rgba(255, 107, 107, 0.08), rgba(200, 80, 80, 0.12));
     border-color: rgba(255, 107, 107, 0.3);
   }
+
+  &.climate-card {
+    background: linear-gradient(135deg, rgba(100, 149, 237, 0.1), rgba(65, 105, 225, 0.15));
+    border-color: rgba(100, 149, 237, 0.3);
+  }
 }
 
 .stat-icon {
@@ -514,4 +519,147 @@
       );
     }
   }
+}
+
+.climate-bonus {
+  color: #ff9e9e;
+  font-weight: 600;
+}
+
+.heat-mini-badge,
+.event-mini-badge {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 10px;
+  margin-left: 4px;
+  color: white;
+}
+
+.event-mini-badge {
+  background: #ff9800;
+}
+
+.log-day-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.log-weather {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #a5c0f0;
+  background: rgba(100, 149, 237, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.log-heat-badge {
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 9px;
+  color: white;
+  margin-left: 2px;
+}
+
+.bonus-text {
+  color: #ff9e9e;
+  font-size: 10px;
+}
+
+.log-badges .badge {
+  &.weather-delay {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffb74d;
+  }
+
+  &.climate {
+    background: rgba(100, 149, 237, 0.2);
+    color: #90caf9;
+  }
+}
+
+.climate-bonus-text {
+  color: #ff9e9e;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.climate-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(100, 149, 237, 0.1);
+  border-radius: 6px;
+
+  .climate-main {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8e8e8;
+  }
+
+  .season-event-tag {
+    padding: 3px 8px;
+    background: #fff3e0;
+    color: #e65100;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .heat-warning-tag {
+    padding: 3px 8px;
+    color: white;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    animation: pulse 1.5s infinite;
+  }
+}
+
+.climate-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.impact-block {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+
+  .impact-label {
+    font-size: 11px;
+    color: #8892a6;
+  }
+
+  .impact-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: #81c784;
+
+    &.negative {
+      color: #ff8a94;
+    }
+  }
+}
+
+.weather-delay-row {
+  color: #ffb74d;
+  background: rgba(255, 152, 0, 0.08);
 }

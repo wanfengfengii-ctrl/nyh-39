@@ -54,6 +54,12 @@
     box-shadow: 0 0 8px #6495ed;
     animation: blink 1.2s infinite;
   }
+
+  &.heat-warning {
+    background: #ff5722;
+    box-shadow: 0 0 12px #ff5722;
+    animation: blink 0.4s infinite;
+  }
 }
 
 @keyframes blink {
@@ -299,4 +305,125 @@
 @keyframes alertPulse {
   from { box-shadow: 0 0 0 rgba(220, 53, 69, 0); }
   to { box-shadow: 0 0 16px rgba(220, 53, 69, 0.2); }
+}
+
+.weather-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(100, 149, 237, 0.2);
+
+  .weather-icon {
+    font-size: 20px;
+  }
+
+  .weather-temp {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .weather-season {
+    font-size: 12px;
+    color: #8892a6;
+    background: rgba(100, 149, 237, 0.2);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .heat-badge {
+    font-size: 11px;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    animation: pulse 1.5s infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.timeline-track {
+  position: relative;
+}
+
+.heat-warning-markers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.heat-warning-marker {
+  position: absolute;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  opacity: 0.8;
+  animation: markerPulse 2s infinite;
+}
+
+@keyframes markerPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.climate-impact-bar {
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: rgba(100, 149, 237, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(100, 149, 237, 0.2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+
+  .impact-label {
+    font-size: 13px;
+    color: #a5c0f0;
+    font-weight: 600;
+  }
+
+  .impact-item {
+    font-size: 12px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    color: #81c784;
+
+    &.negative {
+      color: #ff8a94;
+      background: rgba(220, 53, 69, 0.15);
+    }
+  }
+
+  .season-event-badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    background: #fff3e0;
+    color: #e65100;
+    border-radius: 12px;
+    margin-left: auto;
+  }
+}
+
+.alert-heat {
+  background: rgba(255, 87, 34, 0.12);
+  border-color: #ff5722;
+  color: #ffab91;
+  animation: heatAlertPulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes heatAlertPulse {
+  from { box-shadow: 0 0 0 rgba(255, 87, 34, 0); }
+  to { box-shadow: 0 0 16px rgba(255, 87, 34, 0.2); }
 }

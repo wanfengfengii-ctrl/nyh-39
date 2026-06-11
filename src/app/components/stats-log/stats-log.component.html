@@ -74,9 +74,41 @@
               <div class="stat-content">
                 <div class="stat-label">今日损耗</div>
                 <div class="stat-value">{{ totalLossToday() | number }}</div>
-                <div class="stat-sub">单位冰融化</div>
+                <div class="stat-sub">
+                  单位冰融化
+                  @if (totalClimateBonusLoss() > 0) {
+                    <span class="climate-bonus"> (+{{ totalClimateBonusLoss() }} 气候)</span>
+                  }
+                </div>
               </div>
             </div>
+
+            @if (currentClimate()) {
+              <div class="stat-card climate-card">
+                <div class="stat-icon">{{ getWeatherIcon(currentClimate()!.weather) }}</div>
+                <div class="stat-content">
+                  <div class="stat-label">{{ getSeasonName(currentClimate()!.season) }}季气候</div>
+                  <div class="stat-value">{{ currentClimate()!.temperature }}°C</div>
+                  <div class="stat-sub">
+                    {{ currentClimate()!.weather === 'sunny' ? '晴' :
+                       currentClimate()!.weather === 'cloudy' ? '多云' :
+                       currentClimate()!.weather === 'rainy' ? '雨' :
+                       currentClimate()!.weather === 'snowy' ? '雪' :
+                       currentClimate()!.weather === 'hot_wave' ? '热浪' :
+                       currentClimate()!.weather === 'cool' ? '凉爽' :
+                       currentClimate()!.weather === 'freezing' ? '严寒' : '未知' }}
+                    @if (currentClimate()!.hasHeatWarning) {
+                      <span class="heat-mini-badge" [style.backgroundColor]="getHeatWarningLevelColor(currentClimate()!.heatWarningLevel)">
+                        ⚠
+                      </span>
+                    }
+                    @if (currentClimate()!.seasonEvent) {
+                      <span class="event-mini-badge">📅</span>
+                    }
+                  </div>
+                </div>
+              </div>
+            }
           </div>
 
           <div class="node-breakdown">
@@ -236,7 +268,19 @@
             (click)="selectLog(idx)"
           >
             <div class="log-header">
-              <span class="log-day">第 {{ log.day }} 日</span>
+              <div class="log-day-row">
+                <span class="log-day">第 {{ log.day }} 日</span>
+                @if (log.climate) {
+                  <span class="log-weather">
+                    {{ getWeatherIcon(log.climate.weather) }} {{ log.climate.temperature }}°C
+                    @if (log.climate.hasHeatWarning) {
+                      <span class="log-heat-badge" [style.backgroundColor]="getHeatWarningLevelColor(log.climate.heatWarningLevel)">
+                        ⚠
+                      </span>
+                    }
+                  </span>
+                }
+              </div>
               <div class="log-badges">
                 @if (log.deliveries.length > 0) {
                   <span class="badge delivery">✓ {{ log.deliveries.length }} 批到达</span>
@@ -245,7 +289,18 @@
                   <span class="badge consume">🧊 {{ getLogConsumptionSuccessAmount(log) }} 取用</span>
                 }
                 @if (log.dailyLosses.length > 0) {
-                  <span class="badge loss">💧 {{ getLogTotalLossAmount(log) }} 损耗</span>
+                  <span class="badge loss">
+                    💧 {{ getLogTotalLossAmount(log) }} 损耗
+                    @if (getTotalClimateBonusForLog(log) > 0) {
+                      <span class="bonus-text"> (+{{ getTotalClimateBonusForLog(log) }})</span>
+                    }
+                  </span>
+                }
+                @if (log.weatherDelays && log.weatherDelays.length > 0) {
+                  <span class="badge weather-delay">⏱ {{ log.weatherDelays.length }} 延误</span>
+                }
+                @if (hasClimateImpact(log)) {
+                  <span class="badge climate">🌡 气候影响</span>
                 }
                 @if (log.errors.length > 0) {
                   <span class="badge error">✗ {{ log.errors.length }} 错误</span>
@@ -288,6 +343,71 @@
                       <div class="detail-row">
                         [{{ getNodeTypeLabel(l.nodeId) }}] {{ getNodeName(l.nodeId) }}:
                         融化 {{ l.amount }} 单位
+                        @if (l.climateBonus && l.climateBonus > 0) {
+                          <span class="climate-bonus-text">(其中气候因素 +{{ l.climateBonus }})</span>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+                @if (log.climate) {
+                  <div class="detail-section">
+                    <h6>🌡 当日气候</h6>
+                    <div class="detail-row climate-detail">
+                      <span class="climate-main">
+                        {{ getWeatherIcon(log.climate.weather) }}
+                        {{ log.climate.temperature }}°C
+                        {{ getSeasonName(log.climate.season) }}季
+                      </span>
+                      @if (log.climate.seasonEvent) {
+                        <span class="season-event-tag">📅 {{ log.climate.seasonEvent }}</span>
+                      }
+                      @if (log.climate.hasHeatWarning) {
+                        <span class="heat-warning-tag" [style.backgroundColor]="getHeatWarningLevelColor(log.climate.heatWarningLevel)">
+                          ⚠ {{ log.climate.heatWarningLevel === 'red' ? '红色' : log.climate.heatWarningLevel === 'orange' ? '橙色' : '黄色' }}高温预警
+                        </span>
+                      }
+                    </div>
+                    @if (log.climateImpact) {
+                      <div class="climate-impact-grid">
+                        <div class="impact-block">
+                          <span class="impact-label">损耗率</span>
+                          <span class="impact-value" [class.negative]="log.climateImpact.lossRateMultiplier > 1">
+                            {{ log.climateImpact.lossRateMultiplier > 1 ? '↑' : log.climateImpact.lossRateMultiplier < 1 ? '↓' : '→' }}
+                            {{ ((log.climateImpact.lossRateMultiplier - 1) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                        <div class="impact-block">
+                          <span class="impact-label">取冰需求</span>
+                          <span class="impact-value" [class.negative]="log.climateImpact.demandMultiplier > 1">
+                            {{ log.climateImpact.demandMultiplier > 1 ? '↑' : log.climateImpact.demandMultiplier < 1 ? '↓' : '→' }}
+                            {{ ((log.climateImpact.demandMultiplier - 1) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                        <div class="impact-block">
+                          <span class="impact-label">运输时长</span>
+                          <span class="impact-value" [class.negative]="log.climateImpact.travelTimeMultiplier > 1">
+                            {{ log.climateImpact.travelTimeMultiplier > 1 ? '↑' : log.climateImpact.travelTimeMultiplier < 1 ? '↓' : '→' }}
+                            {{ ((log.climateImpact.travelTimeMultiplier - 1) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                        <div class="impact-block">
+                          <span class="impact-label">节点容量</span>
+                          <span class="impact-value" [class.negative]="log.climateImpact.capacityMultiplier < 1">
+                            {{ log.climateImpact.capacityMultiplier > 1 ? '↑' : log.climateImpact.capacityMultiplier < 1 ? '↓' : '→' }}
+                            {{ ((log.climateImpact.capacityMultiplier - 1) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
+                @if (log.weatherDelays && log.weatherDelays.length > 0) {
+                  <div class="detail-section">
+                    <h6>⏱ 天气延误</h6>
+                    @for (delay of log.weatherDelays; track delay.shipmentId) {
+                      <div class="detail-row weather-delay-row">
+                        运输 {{ delay.shipmentId }}: 延误 {{ delay.delayDays }} 天
                       </div>
                     }
                   </div>
