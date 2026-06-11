@@ -1,0 +1,51 @@
+<div class="app-container">
+  <header class="app-header">
+    <div class="header-content">
+      <div class="logo-area">
+        <h1 class="app-title">❄ 古冰窖调度模拟器</h1>
+        <p class="app-subtitle">清代藏冰·冰鉴·运冰路线 调度与损耗仿真系统</p>
+      </div>
+      <div class="header-badges">
+        <span class="feature-badge">节点配置</span>
+        <span class="feature-badge">运输调度</span>
+        <span class="feature-badge">损耗仿真</span>
+        <span class="feature-badge">时间轴控制</span>
+        <span class="feature-badge">历史回放</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="timeline-section">
+      <app-timeline-control />
+    </section>
+
+    <section class="visualization-section">
+      <app-network-visualization />
+    </section>
+
+    <section class="config-section">
+      <app-node-config />
+      <app-plan-config />
+    </section>
+
+    <section class="stats-section">
+      <app-stats-log />
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-content">
+      <div class="constraint-info">
+        <strong>约束说明：</strong>
+        <span>• 同一运输节点同时刻不能承载两批冰</span>
+        <span>• 库存不足时无法继续取冰</span>
+        <span>• 未连接节点间不可直接运输</span>
+        <span>• 删除冰窖同步清除关联计划</span>
+        <span>• 损耗率不得小于0</span>
+        <span>• 超配风险将暂停调度</span>
+      </div>
+      <div class="copyright">Angular 17 + TypeScript · 古冰窖数字化仿真</div>
+    </div>
+  </footer>
+</div>

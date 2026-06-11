@@ -1,0 +1,153 @@
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: linear-gradient(135deg,
+    rgba(64, 164, 223, 0.15) 0%,
+    rgba(100, 149, 237, 0.2) 50%,
+    rgba(180, 140, 255, 0.15) 100%
+  );
+  border-bottom: 1px solid rgba(100, 149, 237, 0.25);
+  padding: 20px 40px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(10px);
+}
+
+.header-content {
+  max-width: 1800px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.logo-area {
+  .app-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0;
+    background: linear-gradient(135deg, #7fd8ff, #b48cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .app-subtitle {
+    font-size: 12px;
+    color: #8892a6;
+    margin: 4px 0 0;
+    letter-spacing: 1px;
+  }
+}
+
+.header-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feature-badge {
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(100, 149, 237, 0.25);
+  border-radius: 20px;
+  font-size: 11px;
+  color: #a5c0f0;
+}
+
+.app-main {
+  flex: 1;
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 24px 40px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.timeline-section {
+  width: 100%;
+}
+
+.visualization-section {
+  width: 100%;
+}
+
+.config-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1100px) {
+  .config-section {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stats-section {
+  width: 100%;
+}
+
+.app-footer {
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(100, 149, 237, 0.15);
+  padding: 16px 40px;
+  margin-top: 20px;
+}
+
+.footer-content {
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.constraint-info {
+  font-size: 11px;
+  color: #6c757d;
+  line-height: 1.8;
+  margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+
+  strong {
+    color: #8892a6;
+  }
+}
+
+.copyright {
+  font-size: 10px;
+  color: #555d6e;
+  text-align: right;
+}
+
+@media (max-width: 800px) {
+  .app-header {
+    padding: 16px 20px;
+  }
+
+  .app-main {
+    padding: 16px 20px;
+  }
+
+  .app-footer {
+    padding: 12px 20px;
+  }
+
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .app-title {
+    font-size: 20px !important;
+  }
+}

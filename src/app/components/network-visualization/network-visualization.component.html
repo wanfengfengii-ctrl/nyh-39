@@ -1,0 +1,128 @@
+<div class="panel visualization-panel">
+  <div class="panel-header">
+    <h3>运输网络拓扑</h3>
+    <div class="legend">
+      <span class="legend-item"><span class="dot cellar-dot"></span>冰窖</span>
+      <span class="legend-item"><span class="dot jian-dot"></span>冰鉴</span>
+      <span class="legend-item"><span class="dot transit-dot"></span>转运站</span>
+      <span class="legend-item"><span class="dot shipment-dot"></span>在途冰货</span>
+    </div>
+  </div>
+
+  <div class="svg-container">
+    <svg [attr.width]="svgWidth" [attr.height]="svgHeight" class="network-svg">
+      <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="rgba(100, 149, 237, 0.5)" />
+        </marker>
+        <linearGradient id="cellarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#40a4df" />
+          <stop offset="100%" stop-color="#1e6ea3" />
+        </linearGradient>
+        <linearGradient id="jianGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#b48cff" />
+          <stop offset="100%" stop-color="#7d5cff" />
+        </linearGradient>
+        <linearGradient id="transitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffc773" />
+          <stop offset="100%" stop-color="#e8963f" />
+        </linearGradient>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+
+      @for (conn of connections(); track conn.id) {
+        <g class="connection-group">
+          <path
+            [attr.d]="calculateConnectionPath(conn)"
+            fill="none"
+            stroke="rgba(100, 149, 237, 0.3)"
+            stroke-width="3"
+            stroke-dasharray="8 4"
+            marker-end="url(#arrowhead)"
+          />
+          <foreignObject
+            [attr.x]="getMidPoint(conn).x - 60"
+            [attr.y]="getMidPoint(conn).y - 28"
+            width="120"
+            height="24"
+          >
+            <div class="conn-label">
+              {{ conn.travelDays }}天 / 损耗{{ (conn.transitLossRate * 100).toFixed(0) }}%
+            </div>
+          </foreignObject>
+        </g>
+      }
+
+      @for (item of inTransitShipmentsWithConn(); track item.shipment.id) {
+        @if (item.conn) {
+          <g class="shipment-marker">
+            <circle
+              [attr.cx]="getShipmentPos(item.shipment, item.conn).x"
+              [attr.cy]="getShipmentPos(item.shipment, item.conn).y"
+              r="10"
+              fill="#ff6b6b"
+              filter="url(#glow)"
+              class="shipment-circle"
+            />
+            <text
+              [attr.x]="getShipmentPos(item.shipment, item.conn).x"
+              [attr.y]="getShipmentPos(item.shipment, item.conn).y + 4"
+              text-anchor="middle"
+              fill="white"
+              font-size="10"
+              font-weight="bold"
+            >冰</text>
+          </g>
+        }
+      }
+
+      @for (cellar of cellars(); track cellar.id) {
+        <g class="node-group" [attr.transform]="'translate(' + cellar.positionX + ',' + cellar.positionY + ')'">
+          <rect width="80" height="50" rx="8" fill="url(#cellarGrad)" filter="url(#glow)" />
+          <text x="40" y="18" text-anchor="middle" fill="white" font-size="11" font-weight="bold">
+            {{ cellar.name.length > 6 ? cellar.name.substring(0, 6) + '..' : cellar.name }}
+          </text>
+          <rect x="8" y="26" width="64" height="8" rx="4" fill="rgba(0,0,0,0.4)" />
+          <rect x="8" y="26" [attr.width]="64 * (getStockPercent(cellar) / 100)" height="8" rx="4"
+            fill="#7fd8ff" />
+          <text x="40" y="47" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="9">
+            {{ cellar.currentStock }}/{{ cellar.maxCapacity }}
+          </text>
+        </g>
+      }
+
+      @for (jian of jians(); track jian.id) {
+        <g class="node-group" [attr.transform]="'translate(' + jian.positionX + ',' + jian.positionY + ')'">
+          <rect width="80" height="50" rx="8" fill="url(#jianGrad)" filter="url(#glow)" />
+          <text x="40" y="18" text-anchor="middle" fill="white" font-size="11" font-weight="bold">
+            {{ jian.name.length > 6 ? jian.name.substring(0, 6) + '..' : jian.name }}
+          </text>
+          <rect x="8" y="26" width="64" height="8" rx="4" fill="rgba(0,0,0,0.4)" />
+          <rect x="8" y="26" [attr.width]="64 * (getStockPercent(jian) / 100)" height="8" rx="4"
+            fill="#e0c9ff" />
+          <text x="40" y="47" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="9">
+            {{ jian.currentStock }}/{{ jian.maxCapacity }}
+          </text>
+        </g>
+      }
+
+      @for (transit of transitNodes(); track transit.id) {
+        <g class="node-group" [attr.transform]="'translate(' + transit.positionX + ',' + transit.positionY + ')'">
+          <rect width="80" height="50" rx="8" fill="url(#transitGrad)" filter="url(#glow)" />
+          <text x="40" y="22" text-anchor="middle" fill="white" font-size="11" font-weight="bold">
+            {{ transit.name.length > 6 ? transit.name.substring(0, 6) + '..' : transit.name }}
+          </text>
+          <text x="40" y="38" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="9">
+            并发: {{ transit.maxConcurrentShipments }}
+          </text>
+        </g>
+      }
+    </svg>
+  </div>
+</div>

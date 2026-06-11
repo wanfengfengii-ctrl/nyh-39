@@ -1,0 +1,288 @@
+<div class="stats-log-container">
+  <div class="stats-section">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="tabs">
+          <button [class.active]="activeStatsTab() === 'overview'" (click)="activeStatsTab.set('overview')">
+            实时概览
+          </button>
+          <button [class.active]="activeStatsTab() === 'chart'" (click)="activeStatsTab.set('chart')">
+            趋势图表
+          </button>
+        </div>
+      </div>
+
+      @if (activeStatsTab() === 'overview') {
+        <div class="overview-content">
+          <div class="stat-cards">
+            <div class="stat-card cellar-card">
+              <div class="stat-icon">❄</div>
+              <div class="stat-content">
+                <div class="stat-label">冰窖总库存</div>
+                <div class="stat-value">{{ totalCellarStock() | number }}</div>
+                <div class="stat-sub">
+                  / {{ totalCellarCapacity() | number }} ({{
+                    totalCellarCapacity() > 0
+                      ? ((totalCellarStock() / totalCellarCapacity()) * 100).toFixed(1)
+                      : 0
+                  }}%)
+                </div>
+              </div>
+            </div>
+
+            <div class="stat-card jian-card">
+              <div class="stat-icon">🧊</div>
+              <div class="stat-content">
+                <div class="stat-label">冰鉴总库存</div>
+                <div class="stat-value">{{ totalJianStock() | number }}</div>
+                <div class="stat-sub">
+                  / {{ totalJianCapacity() | number }} ({{
+                    totalJianCapacity() > 0
+                      ? ((totalJianStock() / totalJianCapacity()) * 100).toFixed(1)
+                      : 0
+                  }}%)
+                </div>
+              </div>
+            </div>
+
+            <div class="stat-card transit-card">
+              <div class="stat-icon">🚚</div>
+              <div class="stat-content">
+                <div class="stat-label">在途运输</div>
+                <div class="stat-value">{{ activeShipments().length }}</div>
+                <div class="stat-sub">已送达: {{ deliveredShipments().length }} 批</div>
+              </div>
+            </div>
+
+            <div class="stat-card loss-card">
+              <div class="stat-icon">💧</div>
+              <div class="stat-content">
+                <div class="stat-label">今日损耗</div>
+                <div class="stat-value">{{ totalLossToday() | number }}</div>
+                <div class="stat-sub">单位冰融化</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="node-breakdown">
+            <h4>各节点状态</h4>
+            <div class="breakdown-grid">
+              @for (cellar of cellars(); track cellar.id) {
+                <div class="breakdown-item">
+                  <div class="breakdown-header">
+                    <span class="badge cellar-badge">窖</span>
+                    <span class="name">{{ cellar.name }}</span>
+                  </div>
+                  <div class="breakdown-bar">
+                    <div
+                      class="fill cellar-fill"
+                      [style.width.%]="(cellar.currentStock / cellar.maxCapacity) * 100"
+                    ></div>
+                  </div>
+                  <div class="breakdown-numbers">
+                    <span>{{ cellar.currentStock }}</span>
+                    <span>/ {{ cellar.maxCapacity }}</span>
+                    <span class="rate">损耗 {{ (cellar.dailyLossRate * 100).toFixed(1) }}%/日</span>
+                  </div>
+                </div>
+              }
+
+              @for (jian of jians(); track jian.id) {
+                <div class="breakdown-item">
+                  <div class="breakdown-header">
+                    <span class="badge jian-badge">鉴</span>
+                    <span class="name">{{ jian.name }}</span>
+                  </div>
+                  <div class="breakdown-bar">
+                    <div
+                      class="fill jian-fill"
+                      [style.width.%]="(jian.currentStock / jian.maxCapacity) * 100"
+                    ></div>
+                  </div>
+                  <div class="breakdown-numbers">
+                    <span>{{ jian.currentStock }}</span>
+                    <span>/ {{ jian.maxCapacity }}</span>
+                    <span class="rate">损耗 {{ (jian.dailyLossRate * 100).toFixed(1) }}%/日</span>
+                  </div>
+                </div>
+              }
+
+              @for (node of transitNodes(); track node.id) {
+                <div class="breakdown-item">
+                  <div class="breakdown-header">
+                    <span class="badge transit-badge">运</span>
+                    <span class="name">{{ node.name }}</span>
+                  </div>
+                  <div class="breakdown-numbers" style="justify-content: flex-start; gap: 16px;">
+                    <span>最大并发: {{ node.maxConcurrentShipments }} 批</span>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        </div>
+      }
+
+      @if (activeStatsTab() === 'chart') {
+        <div class="chart-content">
+          <div class="chart-block">
+            <h5>每日损耗趋势</h5>
+            @if (lossRateHistory().length > 0) {
+              <div class="bar-chart">
+                <div class="chart-y-axis">
+                  <span>{{ maxLossForChart() }}</span>
+                  <span>{{ roundNumber(maxLossForChart() / 2) }}</span>
+                  <span>0</span>
+                </div>
+                <div class="chart-bars">
+                  @for (item of lossRateHistory(); track item.day) {
+                    <div class="bar-group" [title]="'第'+item.day+'日: 总损耗'+item.totalLoss+', 窖'+item.cellarLoss+', 鉴'+item.jianLoss">
+                      <div class="bar-stack" style="height: 100%;">
+                        <div class="bar cellar-bar" [style.height.%]="getChartHeight(item.cellarLoss, maxLossForChart())"></div>
+                        <div class="bar jian-bar" [style.height.%]="getChartHeight(item.jianLoss, maxLossForChart())"></div>
+                      </div>
+                      <div class="bar-label">{{ item.day }}</div>
+                    </div>
+                  }
+                </div>
+              </div>
+              <div class="chart-legend">
+                <span><span class="legend-swatch cellar-swatch"></span>冰窖损耗</span>
+                <span><span class="legend-swatch jian-swatch"></span>冰鉴损耗</span>
+              </div>
+            } @else {
+              <div class="empty-chart">请先运行调度以生成数据</div>
+            }
+          </div>
+
+          <div class="chart-block">
+            <h5>冰鉴库存趋势</h5>
+            @if (logs().length > 1) {
+              <div class="line-chart-container">
+                <svg class="line-chart" viewBox="0 0 800 200" preserveAspectRatio="none">
+                  @for (jian of jianStockHistoryColors(); track jian.name) {
+                    <polyline
+                      fill="none"
+                      [attr.stroke]="jian.color"
+                      stroke-width="2"
+                      [attr.points]="getJianStockPolylinePoints(jian.name)"
+                    />
+                  }
+                </svg>
+                <div class="chart-legend">
+                  @for (jian of jianStockHistoryColors(); track jian.name) {
+                    <span>
+                      <span class="legend-swatch" [style.background]="jian.color"></span>
+                      {{ jian.name }}
+                    </span>
+                  }
+                </div>
+              </div>
+            } @else {
+              <div class="empty-chart">请先运行调度以生成数据</div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+
+  <div class="log-section">
+    <div class="panel log-panel">
+      <div class="panel-header">
+        <h3>调度日志 ({{ logs().length }})</h3>
+      </div>
+
+      <div class="log-list">
+        @for (log of logs(); track log.day; let idx = $index) {
+          <div
+            class="log-item"
+            [class.selected]="selectedLogIndex() === idx"
+            [class.has-errors]="log.errors.length > 0"
+            [class.has-warnings]="log.warnings.length > 0"
+            (click)="selectLog(idx)"
+          >
+            <div class="log-header">
+              <span class="log-day">第 {{ log.day }} 日</span>
+              <div class="log-badges">
+                @if (log.deliveries.length > 0) {
+                  <span class="badge delivery">✓ {{ log.deliveries.length }} 批到达</span>
+                }
+                @if (getLogConsumptionSuccessAmount(log) > 0) {
+                  <span class="badge consume">🧊 {{ getLogConsumptionSuccessAmount(log) }} 取用</span>
+                }
+                @if (log.dailyLosses.length > 0) {
+                  <span class="badge loss">💧 {{ getLogTotalLossAmount(log) }} 损耗</span>
+                }
+                @if (log.errors.length > 0) {
+                  <span class="badge error">✗ {{ log.errors.length }} 错误</span>
+                }
+                @if (log.warnings.length > 0 && log.errors.length === 0) {
+                  <span class="badge warning">! {{ log.warnings.length }} 警告</span>
+                }
+              </div>
+            </div>
+
+            @if (selectedLogIndex() === idx) {
+              <div class="log-detail">
+                @if (log.deliveries.length > 0) {
+                  <div class="detail-section">
+                    <h6>✅ 货物到达</h6>
+                    @for (d of log.deliveries; track d.id) {
+                      <div class="detail-row">
+                        {{ getNodeName(d.fromId) }} → {{ getNodeName(d.toId) }}:
+                        送达 {{ d.receivedAmount }} (损耗 {{ d.lossAmount }})
+                      </div>
+                    }
+                  </div>
+                }
+                @if (log.consumptions.length > 0) {
+                  <div class="detail-section">
+                    <h6>🧊 取用记录</h6>
+                    @for (c of log.consumptions; track c.jianId; let i = $index) {
+                      <div class="detail-row" [class.failed]="!c.success">
+                        {{ getNodeName(c.jianId) }}: 取 {{ c.amount }} 单位
+                        @if (c.success) { ✓ 成功 }
+                        @else { ✗ 失败: {{ c.reason }} }
+                      </div>
+                    }
+                  </div>
+                }
+                @if (log.dailyLosses.length > 0) {
+                  <div class="detail-section">
+                    <h6>💧 损耗记录</h6>
+                    @for (l of log.dailyLosses; track l.nodeId) {
+                      <div class="detail-row">
+                        [{{ getNodeTypeLabel(l.nodeId) }}] {{ getNodeName(l.nodeId) }}:
+                        融化 {{ l.amount }} 单位
+                      </div>
+                    }
+                  </div>
+                }
+                @if (log.warnings.length > 0) {
+                  <div class="detail-section">
+                    <h6>⚠ 警告</h6>
+                    @for (w of log.warnings; track w) {
+                      <div class="detail-row warning">{{ w }}</div>
+                    }
+                  </div>
+                }
+                @if (log.errors.length > 0) {
+                  <div class="detail-section">
+                    <h6>❌ 错误</h6>
+                    @for (e of log.errors; track e) {
+                      <div class="detail-row error">{{ e }}</div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+        @empty {
+          <div class="empty-hint">暂无调度日志，点击"开始调度"以运行模拟</div>
+        }
+      </div>
+    </div>
+  </div>
+</div>

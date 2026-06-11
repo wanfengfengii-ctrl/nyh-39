@@ -1,0 +1,226 @@
+.panel {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  border: 1px solid rgba(100, 149, 237, 0.2);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: rgba(100, 149, 237, 0.1);
+  border-bottom: 1px solid rgba(100, 149, 237, 0.2);
+
+  h3 {
+    font-size: 16px;
+    color: #b4c7f0;
+    margin: 0;
+  }
+}
+
+.btn-primary {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #4a7cbe, #6495ed);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(100, 149, 237, 0.4);
+  }
+}
+
+.btn-danger {
+  padding: 4px 10px;
+  background: rgba(220, 53, 69, 0.8);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+
+  &:hover {
+    background: rgba(220, 53, 69, 1);
+  }
+}
+
+.add-form {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(100, 149, 237, 0.15);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.type-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+
+  button {
+    padding: 6px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #8892a6;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+
+    &.active {
+      background: rgba(100, 149, 237, 0.3);
+      color: #fff;
+      border-color: #6495ed;
+    }
+  }
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    color: #8892a6;
+    gap: 4px;
+
+    input {
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(100, 149, 237, 0.2);
+      border-radius: 6px;
+      color: #e8e8e8;
+      font-size: 13px;
+
+      &:focus {
+        outline: none;
+        border-color: #6495ed;
+      }
+    }
+  }
+}
+
+.btn-add {
+  width: 100%;
+}
+
+.node-list {
+  padding: 16px 20px;
+  max-height: 500px;
+  overflow-y: auto;
+
+  h4 {
+    font-size: 13px;
+    color: #8892a6;
+    margin: 12px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed rgba(100, 149, 237, 0.2);
+  }
+}
+
+.node-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.empty-hint {
+  text-align: center;
+  color: #555d6e;
+  font-size: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+}
+
+.node-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-radius: 8px;
+  gap: 12px;
+
+  &.cellar-item {
+    background: linear-gradient(135deg, rgba(64, 164, 223, 0.15), rgba(0, 90, 150, 0.15));
+    border: 1px solid rgba(64, 164, 223, 0.3);
+  }
+
+  &.jian-item {
+    background: linear-gradient(135deg, rgba(180, 140, 255, 0.15), rgba(120, 80, 200, 0.15));
+    border: 1px solid rgba(180, 140, 255, 0.3);
+  }
+
+  &.transit-item {
+    background: linear-gradient(135deg, rgba(255, 180, 100, 0.15), rgba(200, 130, 50, 0.15));
+    border: 1px solid rgba(255, 180, 100, 0.3);
+  }
+}
+
+.node-info {
+  flex: 1;
+  min-width: 0;
+
+  strong {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+
+  small {
+    display: block;
+    color: #8892a6;
+    font-size: 11px;
+    margin-top: 4px;
+  }
+}
+
+.stock-bar {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  overflow: hidden;
+
+  .stock-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #40a4df, #6495ed);
+    transition: width 0.3s;
+    border-radius: 3px;
+  }
+
+  &.jian .stock-fill {
+    background: linear-gradient(90deg, #b48cff, #7d5cff);
+  }
+}
+
+.node-edits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    font-size: 10px;
+    color: #8892a6;
+    gap: 2px;
+  }
+}
+
+.mini-input {
+  width: 60px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(100, 149, 237, 0.2);
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 11px;
+}

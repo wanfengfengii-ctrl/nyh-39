@@ -1,0 +1,194 @@
+<div class="panel">
+  <div class="panel-header">
+    <div class="tabs">
+      <button
+        [class.active]="activeTab() === 'connections'"
+        (click)="activeTab.set('connections')"
+      >连接配置 ({{ connections().length }})</button>
+      <button
+        [class.active]="activeTab() === 'shipments'"
+        (click)="activeTab.set('shipments')"
+      >运输计划 ({{ shipments().length }})</button>
+      <button
+        [class.active]="activeTab() === 'consumptions'"
+        (click)="activeTab.set('consumptions')"
+      >取用计划 ({{ consumptions().length }})</button>
+    </div>
+  </div>
+
+  @if (activeTab() === 'connections') {
+    <div class="tab-content">
+      <div class="action-bar">
+        <button class="btn-primary" (click)="showAddConnection.set(!showAddConnection())">
+          {{ showAddConnection() ? '取消' : '+ 添加连接'
+        </button>
+      </div>
+
+      @if (showAddConnection()) {
+        <div class="add-form">
+          <div class="form-grid">
+            <label>起始节点
+              <select [(ngModel)]="newConnection.fromId">
+              <option value="">- 选择节点 -</option>
+              @for (node of allNodes(); track node.id) {
+                <option [value]="node.id">{{ node.name }} ({{ node.type }})</option>
+              }
+              </select>
+            </label>
+            <label>目标节点
+              <select [(ngModel)]="newConnection.toId">
+              <option value="">- 选择节点 -</option>
+              @for (node of allNodes(); track node.id) {
+                <option [value]="node.id">{{ node.name }} ({{ node.type }})</option>
+              }
+              </select>
+            </label>
+            <label>运输天数
+              <input type="number" [(ngModel)]="newConnection.travelDays" min="1">
+            </label>
+            <label>运输损耗率
+              <input type="number" [(ngModel)]="newConnection.transitLossRate"
+                min="0" max="1" step="0.01">
+            </label>
+          </div>
+          <button class="btn-primary btn-block" (click)="addConnection()">确认添加</button>
+        </div>
+      }
+
+      <div class="list">
+        @for (conn of connections(); track conn.id) {
+          <div class="list-item connection-item">
+            <div class="item-main">
+              <span class="node-tag from">{{ getNodeName(conn.fromId) }}</span>
+              <span class="arrow">→ ({{ conn.travelDays }}天, 损耗{{ (conn.transitLossRate * 100).toFixed(0) }}%)</span>
+              <span class="node-tag to">{{ getNodeName(conn.toId) }}</span>
+            </div>
+            <button class="btn-danger" (click)="removeConnection(conn.id)">删除</button>
+          </div>
+        }
+        @empty {
+          <div class="empty-hint">暂无连接，请添加节点间的运输连接</div>
+        }
+      </div>
+    </div>
+  }
+
+  @if (activeTab() === 'shipments') {
+    <div class="tab-content">
+      <div class="action-bar">
+        <button class="btn-primary" (click)="showAddShipment.set(!showAddShipment())">
+          {{ showAddShipment() ? '取消' : '+ 添加运输' }}
+        </button>
+      </div>
+
+      @if (showAddShipment()) {
+        <div class="add-form">
+          <div class="form-grid">
+            <label>起始节点
+              <select [(ngModel)]="newShipment.fromId" (change)="onShipmentNodeChange()">
+              <option value="">- 选择节点 -</option>
+              @for (node of allNodes(); track node.id) {
+                <option [value]="node.id">{{ node.name }}</option>
+              }
+              </select>
+            </label>
+            <label>目标节点
+              <select [(ngModel)]="newShipment.toId" (change)="onShipmentNodeChange()">
+              <option value="">- 选择节点 -</option>
+              @for (node of allNodes(); track node.id) {
+                <option [value]="node.id">{{ node.name }}</option>
+              }
+              </select>
+            </label>
+            <label>运输量
+              <input type="number" [(ngModel)]="newShipment.amount" min="1">
+            </label>
+            <label>启运日
+              <input type="number" [(ngModel)]="newShipment.startDay" min="0" (change)="onShipmentNodeChange()">
+            </label>
+          </div>
+          <button class="btn-primary btn-block" (click)="addShipment()">确认添加</button>
+        </div>
+      }
+
+      <div class="list">
+        @for (ship of shipments(); track ship.id) {
+          <div class="list-item shipment-item">
+            <div class="item-main">
+              <span class="status-tag" [class]="getShipmentStatusClass(ship)">
+                {{ getShipmentStatusText(ship) }}
+              </span>
+              <span class="shipment-info">
+                <span class="node-tag from">{{ getNodeName(ship.fromId) }}</span>
+                <span class="arrow">→</span>
+                <span class="node-tag to">{{ getNodeName(ship.toId) }}</span>
+                <span class="shipment-amount">{{ ship.amount }}单位</span>
+                <span class="shipment-time">第{{ ship.startDay }}日→第{{ ship.arrivalDay }}日</span>
+              </span>
+            </div>
+            @if (ship.status === 'pending') {
+              <button class="btn-danger" (click)="removeShipment(ship.id)">取消</button>
+            }
+          </div>
+        }
+        @empty {
+          <div class="empty-hint">暂无运输计划</div>
+        }
+      </div>
+    </div>
+  }
+
+  @if (activeTab() === 'consumptions') {
+    <div class="tab-content">
+      <div class="action-bar">
+        <button class="btn-primary" (click)="showAddConsumption.set(!showAddConsumption())">
+          {{ showAddConsumption() ? '取消' : '+ 添加取用' }}
+        </button>
+      </div>
+
+      @if (showAddConsumption()) {
+        <div class="add-form">
+          <div class="form-grid">
+            <label>冰鉴
+              <select [(ngModel)]="newConsumption.jianId">
+              <option value="">- 选择冰鉴 -</option>
+              @for (jian of jians(); track jian.id) {
+                <option [value]="jian.id">{{ jian.name }}</option>
+              }
+              </select>
+            </label>
+            <label>日期
+              <input type="number" [(ngModel)]="newConsumption.day" min="1" [max]="state().totalDays">
+            </label>
+            <label>取冰量
+              <input type="number" [(ngModel)]="newConsumption.amount" min="1">
+            </label>
+            <label>说明
+              <input type="text" [(ngModel)]="newConsumption.description" placeholder="可选">
+            </label>
+          </div>
+          <button class="btn-primary btn-block" (click)="addConsumption()">确认添加</button>
+        </div>
+      }
+
+      <div class="list">
+        @for (plan of consumptions(); track plan.id) {
+          <div class="list-item consumption-item">
+            <div class="item-main">
+              <span class="day-tag">第{{ plan.day }}日</span>
+              <span class="node-tag to">{{ getNodeName(plan.jianId) }}</span>
+              <span class="amount">{{ plan.amount }}单位</span>
+              @if (plan.description) {
+                <span class="desc">{{ plan.description }}</span>
+              }
+            </div>
+            <button class="btn-danger" (click)="removeConsumption(plan.id)">删除</button>
+          </div>
+        }
+        @empty {
+          <div class="empty-hint">暂无取用计划</div>
+        }
+      </div>
+    </div>
+  }
+</div>

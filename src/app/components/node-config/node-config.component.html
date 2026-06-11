@@ -1,0 +1,173 @@
+<div class="panel">
+  <div class="panel-header">
+    <h3>节点配置</h3>
+    <button class="btn-primary" (click)="showAddForm.set(!showAddForm())">
+      {{ showAddForm() ? '取消' : '+ 添加节点' }}
+    </button>
+  </div>
+
+  @if (showAddForm()) {
+    <div class="add-form">
+      <div class="type-tabs">
+        <button
+          [class.active]="selectedType() === 'cellar'"
+          (click)="selectedType.set('cellar')"
+        >冰窖</button>
+        <button
+          [class.active]="selectedType() === 'jian'"
+          (click)="selectedType.set('jian')"
+        >冰鉴</button>
+        <button
+          [class.active]="selectedType() === 'transit'"
+          (click)="selectedType.set('transit')"
+        >转运站</button>
+      </div>
+
+      @if (selectedType() === 'cellar') {
+        <div class="form-grid">
+          <label>名称
+            <input type="text" [(ngModel)]="newCellar.name" placeholder="如：景山西冰窖">
+          </label>
+          <label>最大容量
+            <input type="number" [(ngModel)]="newCellar.maxCapacity" min="0">
+          </label>
+          <label>初始库存
+            <input type="number" [(ngModel)]="newCellar.currentStock" min="0">
+          </label>
+          <label>日损耗率
+            <input type="number" [(ngModel)]="newCellar.dailyLossRate" min="0" max="1" step="0.01">
+          </label>
+          <label>X坐标
+            <input type="number" [(ngModel)]="newCellar.positionX">
+          </label>
+          <label>Y坐标
+            <input type="number" [(ngModel)]="newCellar.positionY">
+          </label>
+        </div>
+      }
+
+      @if (selectedType() === 'jian') {
+        <div class="form-grid">
+          <label>名称
+            <input type="text" [(ngModel)]="newJian.name" placeholder="如：御膳房冰鉴">
+          </label>
+          <label>最大容量
+            <input type="number" [(ngModel)]="newJian.maxCapacity" min="0">
+          </label>
+          <label>初始库存
+            <input type="number" [(ngModel)]="newJian.currentStock" min="0">
+          </label>
+          <label>日损耗率
+            <input type="number" [(ngModel)]="newJian.dailyLossRate" min="0" max="1" step="0.01">
+          </label>
+          <label>X坐标
+            <input type="number" [(ngModel)]="newJian.positionX">
+          </label>
+          <label>Y坐标
+            <input type="number" [(ngModel)]="newJian.positionY">
+          </label>
+        </div>
+      }
+
+      @if (selectedType() === 'transit') {
+        <div class="form-grid">
+          <label>名称
+            <input type="text" [(ngModel)]="newTransit.name" placeholder="如：地安门转运站">
+          </label>
+          <label>最大并发运输
+            <input type="number" [(ngModel)]="newTransit.maxConcurrentShipments" min="1">
+          </label>
+          <label>X坐标
+            <input type="number" [(ngModel)]="newTransit.positionX">
+          </label>
+          <label>Y坐标
+            <input type="number" [(ngModel)]="newTransit.positionY">
+          </label>
+        </div>
+      }
+
+      <button class="btn-primary btn-add" (click)="addNode()">确认添加</button>
+    </div>
+  }
+
+  <div class="node-list">
+    <h4>冰窖 ({{ cellars().length }})</h4>
+    <div class="node-items">
+      @for (cellar of cellars(); track cellar.id) {
+        <div class="node-item cellar-item">
+          <div class="node-info">
+            <strong>{{ cellar.name }}</strong>
+            <div class="stock-bar">
+              <div class="stock-fill"
+                [style.width.%]="(cellar.currentStock / cellar.maxCapacity) * 100">
+              </div>
+            </div>
+            <small>库存: {{ cellar.currentStock }} / {{ cellar.maxCapacity }}</small>
+          </div>
+          <div class="node-edits">
+            <label>损耗
+              <input type="number" [value]="cellar.dailyLossRate"
+                (change)="updateCellarLoss(cellar, $event)"
+                min="0" max="1" step="0.01" class="mini-input">
+            </label>
+            <button class="btn-danger" (click)="removeCellar(cellar.id)">删</button>
+          </div>
+        </div>
+      }
+      @empty {
+        <div class="empty-hint">暂无冰窖</div>
+      }
+    </div>
+
+    <h4>冰鉴 ({{ jians().length }})</h4>
+    <div class="node-items">
+      @for (jian of jians(); track jian.id) {
+        <div class="node-item jian-item">
+          <div class="node-info">
+            <strong>{{ jian.name }}</strong>
+            <div class="stock-bar jian">
+              <div class="stock-fill"
+                [style.width.%]="(jian.currentStock / jian.maxCapacity) * 100">
+              </div>
+            </div>
+            <small>库存: {{ jian.currentStock }} / {{ jian.maxCapacity }}</small>
+          </div>
+          <div class="node-edits">
+            <label>损耗
+              <input type="number" [value]="jian.dailyLossRate"
+                (change)="updateJianLoss(jian, $event)"
+                min="0" max="1" step="0.01" class="mini-input">
+            </label>
+            <button class="btn-danger" (click)="removeJian(jian.id)">删</button>
+          </div>
+        </div>
+      }
+      @empty {
+        <div class="empty-hint">暂无冰鉴</div>
+      }
+    </div>
+
+    <h4>转运站 ({{ transitNodes().length }})</h4>
+    <div class="node-items">
+      @for (node of transitNodes(); track node.id) {
+        <div class="node-item transit-item">
+          <div class="node-info">
+            <strong>{{ node.name }}</strong>
+            <small>最大并发: {{ node.maxConcurrentShipments }} 批</small>
+          </div>
+          <div class="node-edits">
+            <label>并发
+              <input type="number" [value]="node.maxConcurrentShipments"
+                (change)="updateTransitCapacity(node, $event)"
+                min="1" class="mini-input">
+            </label>
+            <button class="btn-danger" (click)="removeTransit(node.id)">删</button>
+          </div>
+        </div>
+      }
+      @empty {
+        <div class="empty-hint">暂无转运站</div>
+      }
+    </div>
+  </div>
+</div>

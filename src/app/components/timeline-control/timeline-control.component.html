@@ -1,0 +1,114 @@
+<div class="timeline-panel">
+  <div class="control-bar">
+    <div class="control-group status-group">
+      <div class="status-indicator">
+        <span class="indicator-dot"
+          [class.running]="state().isRunning && !state().isPaused && !state().isOverAllocated"
+          [class.paused]="state().isPaused"
+          [class.overallocated]="state().isOverAllocated"
+          [class.replaying]="state().isReplaying"
+        ></span>
+        <span class="status-text">
+          @if (state().isReplaying) { 回放中 }
+          @else if (state().isOverAllocated) { 超配暂停 }
+          @else if (state().isPaused) { 已暂停 }
+          @else if (state().isRunning) { 运行中 }
+          @else { 待命 }
+        </span>
+      </div>
+      <div class="day-display">
+        <span class="day-label">第</span>
+        <span class="day-number">{{ state().currentDay }}</span>
+        <span class="day-label">/ {{ state().totalDays }} 日</span>
+      </div>
+    </div>
+
+    <div class="control-group button-group">
+      @if (!state().isRunning && state().logs.length === 0) {
+        <button class="btn btn-success" (click)="start()">
+          ▶ 开始调度
+        </button>
+      }
+      @if (state().isRunning && !state().isPaused && !state().isOverAllocated) {
+        <button class="btn btn-warning" (click)="pause()">
+          ⏸ 暂停
+        </button>
+      }
+      @if (state().isPaused && !state().isOverAllocated) {
+        <button class="btn btn-success" (click)="resume()">
+          ▶ 继续
+        </button>
+      }
+      @if (state().isOverAllocated) {
+        <button class="btn btn-warning" (click)="start()" title="忽略超配继续">
+          ▶ 强制继续
+        </button>
+      }
+      <button class="btn btn-secondary" (click)="reset()">
+        ⟲ 重置
+      </button>
+      @if (state().originalLogs) {
+        <button class="btn btn-primary" (click)="startReplay()">
+          ↻ 回放
+        </button>
+      }
+    </div>
+
+    <div class="control-group speed-group">
+      <span class="speed-label">速度:</span>
+      <div class="speed-buttons">
+        @for (speed of speedOptions; track speed) {
+          <button
+            [class.active]="state().speedMultiplier === speed"
+            (click)="setSpeed(speed)"
+            class="speed-btn"
+          >{{ speed }}x</button>
+        }
+      </div>
+    </div>
+
+    <div class="control-group tools-group">
+      <button class="btn btn-outline" (click)="checkOverAllocation()">
+                检查超配
+      </button>
+      <button class="btn btn-outline" (click)="loadDemo()">
+                载入示例
+      </button>
+      <div class="total-days-input">
+        <label>总天数</label>
+        <input type="number" [value]="state().totalDays" min="1" (change)="onTotalDaysChange($event)">
+      </div>
+      <div class="jump-input">
+        <label>跳转到日</label>
+        <input type="number" [(ngModel)]="jumpDayInput" min="0" [max]="state().totalDays">
+        <button class="btn btn-small" (click)="jumpToDay()">Go</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="timeline-track">
+    <div class="timeline-progress" [style.width.%]="progressPercent"></div>
+    <div class="timeline-markers">
+      @for (marker of getMarkers(); track marker) {
+        <div class="timeline-marker" [style.left.%]="(marker / state().totalDays) * 100">
+          <span class="marker-label">{{ marker }}</span>
+        </div>
+      }
+    </div>
+  </div>
+
+  @if (state().overAllocationReason) {
+    <div class="alert alert-danger">
+      <strong>⚠ 超配风险警告！</strong>
+      <p>{{ state().overAllocationReason }}</p>
+      <small>请调整运输计划或取用计划后再继续，或点击"强制继续"忽略此警告</small>
+    </div>
+  }
+
+  @if (state().isReplaying) {
+    <div class="alert alert-info">
+      <strong>↻ 回放模式</strong>
+      <p>正在回放原始调度记录，结果与原记录保持一致</p>
+    </div>
+  }
+</div>
