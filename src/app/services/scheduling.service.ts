@@ -57,6 +57,35 @@ export class SchedulingService {
     return Math.random().toString(36).substring(2, 11);
   }
 
+  private refundShipmentStock(shipment: Shipment): void {
+    if (shipment.status !== 'pending') return;
+    const fromNode = this.allNodes().find((n) => n.id === shipment.fromId);
+    if (!fromNode) return;
+    if (fromNode.type === 'cellar') {
+      this.updateCellar(fromNode.id, {
+        currentStock: Math.min(
+          fromNode.maxCapacity,
+          fromNode.currentStock + shipment.amount
+        ),
+      });
+    } else if (fromNode.type === 'jian') {
+      this.updateJian(fromNode.id, {
+        currentStock: Math.min(
+          fromNode.maxCapacity,
+          fromNode.currentStock + shipment.amount
+        ),
+      });
+    }
+  }
+
+  private refundShipmentsFromNode(nodeId: string): void {
+    for (const s of this._shipments()) {
+      if (s.status === 'pending' && s.fromId === nodeId) {
+        this.refundShipmentStock(s);
+      }
+    }
+  }
+
   addCellar(data: Omit<IceCellar, 'id' | 'type'>): IceCellar {
     if (data.dailyLossRate < 0) {
       throw new Error('损耗率不能小于 0');
@@ -80,18 +109,14 @@ export class SchedulingService {
   }
 
   removeCellar(id: string): void {
-    const relatedShipments = this._shipments().filter(
-      (s) => s.fromId === id || s.toId === id
-    );
     const relatedConnections = this._connections().filter(
       (c) => c.fromId === id || c.toId === id
     );
 
-    if (relatedShipments.length > 0) {
-      this._shipments.update((prev) =>
-        prev.filter((s) => s.fromId !== id && s.toId !== id)
-      );
-    }
+    this.refundShipmentsFromNode(id);
+    this._shipments.update((prev) =>
+      prev.filter((s) => s.fromId !== id && s.toId !== id)
+    );
 
     if (relatedConnections.length > 0) {
       this._connections.update((prev) =>
@@ -125,6 +150,7 @@ export class SchedulingService {
   }
 
   removeJian(id: string): void {
+    this.refundShipmentsFromNode(id);
     this._shipments.update((prev) =>
       prev.filter((s) => s.fromId !== id && s.toId !== id)
     );
@@ -155,6 +181,7 @@ export class SchedulingService {
   }
 
   removeTransitNode(id: string): void {
+    this.refundShipmentsFromNode(id);
     this._shipments.update((prev) =>
       prev.filter((s) => s.fromId !== id && s.toId !== id)
     );
@@ -224,16 +251,32 @@ export class SchedulingService {
     if (!fromNode) {
       return { success: false, error: '起始节点不存在' };
     }
+    const toNode = this.allNodes().find((n) => n.id === data.toId);
+    if (!toNode) {
+      return { success: false, error: '目标节点不存在' };
+    }
 
-    const conflict = this.checkShipmentConflict(
+    const fromConflict = this.checkShipmentConflict(
       data.fromId,
       data.startDay,
       data.arrivalDay
     );
-    if (conflict) {
+    if (fromConflict) {
       return {
         success: false,
-        error: '同一运输节点同一时刻不能承载两批冰',
+        error: `节点 [${fromNode.name}] 在第 ${data.startDay}-${data.arrivalDay} 日已被占用，同一节点不能同时承载两批冰`,
+      };
+    }
+
+    const toConflict = this.checkShipmentConflict(
+      data.toId,
+      data.startDay,
+      data.arrivalDay
+    );
+    if (toConflict) {
+      return {
+        success: false,
+        error: `节点 [${toNode.name}] 在第 ${data.startDay}-${data.arrivalDay} 日已被占用，同一节点不能同时承载两批冰`,
       };
     }
 
@@ -268,6 +311,10 @@ export class SchedulingService {
   }
 
   removeShipment(id: string): void {
+    const shipment = this._shipments().find((s) => s.id === id);
+    if (shipment) {
+      this.refundShipmentStock(shipment);
+    }
     this._shipments.update((prev) => prev.filter((s) => s.id !== id));
   }
 
@@ -540,20 +587,28 @@ export class SchedulingService {
       (s) => s.status === 'pending' && s.startDay <= day
     );
     for (const shipment of pendingShipments) {
-      const conflict = this.checkShipmentConflict(
+      const fromConflict = this.checkShipmentConflict(
         shipment.fromId,
         shipment.startDay,
         shipment.arrivalDay
       );
-      if (!conflict) {
+      const toConflict = this.checkShipmentConflict(
+        shipment.toId,
+        shipment.startDay,
+        shipment.arrivalDay
+      );
+      if (!fromConflict && !toConflict) {
         this._shipments.update((prev) =>
           prev.map((s) =>
             s.id === shipment.id ? { ...s, status: 'in_transit' } : s
           )
         );
       } else {
+        const conflictNode = fromConflict
+          ? this.allNodes().find((n) => n.id === shipment.fromId)?.name
+          : this.allNodes().find((n) => n.id === shipment.toId)?.name;
         log.warnings.push(
-          `第 ${day} 天: 节点冲突，运输计划 [${shipment.id}] 延迟启动`
+          `第 ${day} 天: 节点 [${conflictNode || '未知'}] 冲突，运输计划 [${shipment.id}] 延迟启动`
         );
       }
     }
