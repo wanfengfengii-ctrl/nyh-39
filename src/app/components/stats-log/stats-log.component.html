@@ -45,6 +45,21 @@
               </div>
             </div>
 
+            <div class="stat-card transit-stock-card">
+              <div class="stat-icon">📦</div>
+              <div class="stat-content">
+                <div class="stat-label">中转库存</div>
+                <div class="stat-value">{{ totalTransitStock() | number }}</div>
+                <div class="stat-sub">
+                  / {{ totalTransitCapacity() | number }} ({{
+                    totalTransitCapacity() > 0
+                      ? ((totalTransitStock() / totalTransitCapacity()) * 100).toFixed(1)
+                      : 0
+                  }}%)
+                </div>
+              </div>
+            </div>
+
             <div class="stat-card transit-card">
               <div class="stat-icon">🚚</div>
               <div class="stat-content">
@@ -113,8 +128,26 @@
                     <span class="badge transit-badge">运</span>
                     <span class="name">{{ node.name }}</span>
                   </div>
-                  <div class="breakdown-numbers" style="justify-content: flex-start; gap: 16px;">
+                  <div class="breakdown-bar">
+                    <div
+                      class="fill transit-fill"
+                      [style.width.%]="(node.currentStock / node.maxCapacity) * 100"
+                    ></div>
+                    <div
+                      class="fill occupancy-fill"
+                      [style.width.%]="(getNodeOccupancy(node.id) / node.maxCapacity) * 100"
+                      [style.left.%]="(node.currentStock / node.maxCapacity) * 100"
+                    ></div>
+                  </div>
+                  <div class="breakdown-numbers">
+                    <span>库存: {{ node.currentStock }}</span>
+                    <span>占用: {{ getNodeOccupancy(node.id) }}</span>
+                    <span>/ {{ node.maxCapacity }}</span>
+                    <span class="rate">损耗 {{ (node.dailyLossRate * 100).toFixed(1) }}%/日</span>
+                  </div>
+                  <div class="breakdown-numbers" style="justify-content: flex-start; gap: 16px; margin-top: 4px;">
                     <span>最大并发: {{ node.maxConcurrentShipments }} 批</span>
+                    <span>可用容量: {{ getNodeAvailableCapacity(node.id) }}</span>
                   </div>
                 </div>
               }
@@ -267,6 +300,18 @@
                     }
                   </div>
                 }
+                @if (log.transitOccupancies && log.transitOccupancies.length > 0) {
+                  <div class="detail-section">
+                    <h6>📦 中转库存占用</h6>
+                    @for (occ of log.transitOccupancies; track occ.occupancyId) {
+                      <div class="detail-row">
+                        [{{ getNodeName(occ.nodeId) }}]: {{ occ.amount }} 单位
+                        ({{ occ.status === 'active' ? '占用中' : occ.status === 'ended' ? '已释放' : '已取消' }})
+                      </div>
+                    }
+                  </div>
+                }
+
                 @if (log.errors.length > 0) {
                   <div class="detail-section">
                     <h6>❌ 错误</h6>

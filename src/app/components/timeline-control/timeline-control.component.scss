@@ -277,10 +277,22 @@
     animation: alertPulse 1s ease-in-out infinite alternate;
   }
 
+  &-warning {
+    background: rgba(255, 193, 7, 0.12);
+    border-color: #ffc107;
+    color: #ffd75a;
+  }
+
   &-info {
     background: rgba(100, 149, 237, 0.12);
     border-color: #6495ed;
     color: #a5c0f0;
+  }
+
+  &-success {
+    background: rgba(76, 175, 80, 0.12);
+    border-color: #4caf50;
+    color: #81c784;
   }
 }
 

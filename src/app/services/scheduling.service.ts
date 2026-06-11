@@ -10,6 +10,9 @@ import {
   SchedulingState,
   SchedulingConfig,
   IceNode,
+  MultiStageShipment,
+  ShipmentStage,
+  TransitOccupancy,
 } from '../models/ice.models';
 
 @Injectable({
@@ -22,6 +25,8 @@ export class SchedulingService {
   private _connections = signal<NodeConnection[]>([]);
   private _consumptionPlans = signal<DailyConsumptionPlan[]>([]);
   private _shipments = signal<Shipment[]>([]);
+  private _multiStageShipments = signal<MultiStageShipment[]>([]);
+  private _transitOccupancies = signal<TransitOccupancy[]>([]);
 
   private _state = signal<SchedulingState>({
     currentDay: 0,
@@ -35,6 +40,10 @@ export class SchedulingService {
     warnings: [],
     isOverAllocated: false,
     overAllocationReason: null,
+    pauseReason: null,
+    failedMultiStageId: null,
+    replayConsistencyError: null,
+    replayConsistencyPassed: false,
   });
 
   private timerInterval: ReturnType<typeof setInterval> | null = null;
@@ -45,6 +54,8 @@ export class SchedulingService {
   readonly connections = computed(() => this._connections());
   readonly consumptionPlans = computed(() => this._consumptionPlans());
   readonly shipments = computed(() => this._shipments());
+  readonly multiStageShipments = computed(() => this._multiStageShipments());
+  readonly transitOccupancies = computed(() => this._transitOccupancies());
   readonly state = computed(() => this._state());
 
   readonly allNodes = computed<IceNode[]>(() => [
@@ -55,6 +66,49 @@ export class SchedulingService {
 
   private generateId(): string {
     return Math.random().toString(36).substring(2, 11);
+  }
+
+  private generateLogHash(log: DailyLog): string {
+    const hashContent = JSON.stringify({
+      day: log.day,
+      cellarStocks: log.cellarStocks,
+      jianStocks: log.jianStocks,
+      transitStocks: log.transitStocks,
+      deliveries: log.deliveries.map(d => ({ id: d.id, status: d.status, receivedAmount: d.receivedAmount })),
+      consumptions: log.consumptions,
+      dailyLosses: log.dailyLosses,
+      multiStageUpdates: log.multiStageUpdates,
+      transitOccupancies: log.transitOccupancies,
+    });
+    let hash = 0;
+    for (let i = 0; i < hashContent.length; i++) {
+      const char = hashContent.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
+  getTransitOccupancyAtNode(nodeId: string, day: number): TransitOccupancy[] {
+    return this._transitOccupancies().filter(o =>
+      o.nodeId === nodeId &&
+      o.status === 'active' &&
+      o.startDay <= day &&
+      o.endDay >= day
+    );
+  }
+
+  getTotalOccupiedAmountAtNode(nodeId: string, day: number): number {
+    return this.getTransitOccupancyAtNode(nodeId, day)
+      .reduce((sum, o) => sum + o.amount, 0);
+  }
+
+  getAvailableCapacityAtNode(nodeId: string, day: number): number {
+    const node = this.allNodes().find(n => n.id === nodeId);
+    if (!node || node.type === 'cellar') return Number.MAX_SAFE_INTEGER;
+    const occupied = this.getTotalOccupiedAmountAtNode(nodeId, day);
+    const currentStock = node.currentStock;
+    return node.maxCapacity - currentStock - occupied;
   }
 
   private refundShipmentStock(shipment: Shipment): void {
@@ -70,6 +124,13 @@ export class SchedulingService {
       });
     } else if (fromNode.type === 'jian') {
       this.updateJian(fromNode.id, {
+        currentStock: Math.min(
+          fromNode.maxCapacity,
+          fromNode.currentStock + shipment.amount
+        ),
+      });
+    } else if (fromNode.type === 'transit') {
+      this.updateTransitNode(fromNode.id, {
         currentStock: Math.min(
           fromNode.maxCapacity,
           fromNode.currentStock + shipment.amount
@@ -162,6 +223,12 @@ export class SchedulingService {
   }
 
   addTransitNode(data: Omit<TransitNode, 'id' | 'type'>): TransitNode {
+    if (data.dailyLossRate < 0) {
+      throw new Error('损耗率不能小于 0');
+    }
+    if (data.maxCapacity < 0) {
+      throw new Error('容量不能小于 0');
+    }
     const node: TransitNode = {
       ...data,
       id: this.generateId(),
@@ -175,6 +242,12 @@ export class SchedulingService {
     id: string,
     changes: Partial<Omit<TransitNode, 'id' | 'type'>>
   ): void {
+    if (changes.dailyLossRate !== undefined && changes.dailyLossRate < 0) {
+      throw new Error('损耗率不能小于 0');
+    }
+    if (changes.maxCapacity !== undefined && changes.maxCapacity < 0) {
+      throw new Error('容量不能小于 0');
+    }
     this._transitNodes.update((prev) =>
       prev.map((n) => (n.id === id ? { ...n, ...changes } : n))
     );
@@ -318,6 +391,618 @@ export class SchedulingService {
     this._shipments.update((prev) => prev.filter((s) => s.id !== id));
   }
 
+  addMultiStageShipment(data: {
+    name: string;
+    totalAmount: number;
+    nodeIds: string[];
+    startDay: number;
+    transitStayDays?: number;
+  }): {
+    success: boolean;
+    multiStageShipment?: MultiStageShipment;
+    error?: string;
+  } {
+    if (data.nodeIds.length < 2) {
+      return { success: false, error: '多段联运至少需要 2 个节点' };
+    }
+    if (data.totalAmount <= 0) {
+      return { success: false, error: '运输量必须大于 0' };
+    }
+
+    const stayDays = data.transitStayDays ?? 1;
+    const validation = this.validateMultiStageRoute(data.nodeIds, data.totalAmount, data.startDay, stayDays);
+    if (!validation.success) {
+      return { success: false, error: validation.error };
+    }
+
+    const stages: ShipmentStage[] = [];
+    const occupancies: TransitOccupancy[] = [];
+    let currentDay = data.startDay;
+    let currentAmount = data.totalAmount;
+
+    for (let i = 0; i < data.nodeIds.length - 1; i++) {
+      const fromId = data.nodeIds[i];
+      const toId = data.nodeIds[i + 1];
+      const connection = this._connections().find(
+        (c) =>
+          (c.fromId === fromId && c.toId === toId) ||
+          (c.fromId === toId && c.toId === fromId)
+      );
+      if (!connection) {
+        return { success: false, error: `节点 ${fromId} 到 ${toId} 之间没有连接` };
+      }
+
+      const lossAmount = Math.floor(currentAmount * connection.transitLossRate);
+      const receivedAmount = currentAmount - lossAmount;
+      const arrivalDay = currentDay + connection.travelDays;
+
+      const occupancyId = this.generateId();
+      const isLastStage = i === data.nodeIds.length - 2;
+
+      if (!isLastStage) {
+        const toNode = this.allNodes().find(n => n.id === toId);
+        if (toNode && (toNode.type === 'transit' || toNode.type === 'jian' || toNode.type === 'cellar')) {
+          occupancies.push({
+            id: occupancyId,
+            multiStageId: '',
+            stageIndex: i,
+            nodeId: toId,
+            amount: receivedAmount,
+            startDay: arrivalDay,
+            endDay: arrivalDay + stayDays,
+            status: 'active',
+          });
+        }
+      }
+
+      stages.push({
+        id: this.generateId(),
+        fromId,
+        toId,
+        connectionId: connection.id,
+        startDay: currentDay,
+        arrivalDay,
+        amount: currentAmount,
+        lossAmount,
+        receivedAmount,
+        status: 'pending',
+        transitStayDays: stayDays,
+        occupancyId: isLastStage ? undefined : occupancyId,
+      });
+
+      currentDay = arrivalDay + (isLastStage ? 0 : stayDays);
+      currentAmount = receivedAmount;
+    }
+
+    const multiStageId = this.generateId();
+    occupancies.forEach(o => o.multiStageId = multiStageId);
+
+    const multiStageShipment: MultiStageShipment = {
+      id: multiStageId,
+      name: data.name,
+      totalAmount: data.totalAmount,
+      stages,
+      status: 'pending',
+      currentStageIndex: 0,
+      createdAt: Date.now(),
+      occupancies,
+    };
+
+    this._transitOccupancies.update(prev => [...prev, ...occupancies]);
+    this._multiStageShipments.update((prev) => [...prev, multiStageShipment]);
+    return { success: true, multiStageShipment };
+  }
+
+  private validateMultiStageRoute(
+    nodeIds: string[],
+    totalAmount: number,
+    startDay: number,
+    transitStayDays: number = 1
+  ): { success: boolean; error?: string } {
+    let currentDay = startDay;
+    let currentAmount = totalAmount;
+
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      const fromId = nodeIds[i];
+      const toId = nodeIds[i + 1];
+      const fromNode = this.allNodes().find((n) => n.id === fromId);
+      const toNode = this.allNodes().find((n) => n.id === toId);
+
+      if (!fromNode || !toNode) {
+        return { success: false, error: '节点不存在' };
+      }
+
+      const connection = this._connections().find(
+        (c) =>
+          (c.fromId === fromId && c.toId === toId) ||
+          (c.fromId === toId && c.toId === fromId)
+      );
+      if (!connection) {
+        return {
+          success: false,
+          error: `路线断开：节点 [${fromNode.name}] 到 [${toNode.name}] 之间没有运输连接`,
+        };
+      }
+
+      const arrivalDay = currentDay + connection.travelDays;
+      const isLastStage = i === nodeIds.length - 2;
+
+      if (i === 0) {
+        if (fromNode.type === 'cellar' || fromNode.type === 'jian' || fromNode.type === 'transit') {
+          if (fromNode.currentStock < currentAmount) {
+            return {
+              success: false,
+              error: `节点 [${fromNode.name}] 库存不足，当前库存 ${fromNode.currentStock}，需要 ${currentAmount}`,
+            };
+          }
+        }
+      }
+
+      const fromConflict = this.checkShipmentConflict(fromId, currentDay, arrivalDay);
+      if (fromConflict) {
+        return {
+          success: false,
+          error: `并发超限：节点 [${fromNode.name}] 在第 ${currentDay}-${arrivalDay} 日并发运输数已达上限，无法安排运输`,
+        };
+      }
+
+      const toConflict = this.checkShipmentConflict(toId, currentDay, arrivalDay);
+      if (toConflict) {
+        return {
+          success: false,
+          error: `并发超限：节点 [${toNode.name}] 在第 ${currentDay}-${arrivalDay} 日并发运输数已达上限，无法安排运输`,
+        };
+      }
+
+      const receivedAmount = currentAmount - Math.floor(currentAmount * connection.transitLossRate);
+
+      if (toNode.type === 'cellar' || toNode.type === 'jian' || toNode.type === 'transit') {
+        const occupancyEndDay = isLastStage ? arrivalDay : arrivalDay + transitStayDays;
+        for (let d = arrivalDay; d <= occupancyEndDay; d++) {
+          const availableCapacity = this.getAvailableCapacityAtNode(toId, d);
+          if (availableCapacity < receivedAmount) {
+            const occupied = this.getTotalOccupiedAmountAtNode(toId, d);
+            return {
+              success: false,
+              error: `中转容量不足：节点 [${toNode.name}] 在第 ${d} 日容量不足，已占用 ${occupied}，当前库存 ${toNode.currentStock}，总容量 ${toNode.maxCapacity}，需要 ${receivedAmount}`,
+            };
+          }
+        }
+      }
+
+      if (!isLastStage) {
+        const nextToId = nodeIds[i + 2];
+        const nextConnection = this._connections().find(
+          (c) =>
+            (c.fromId === toId && c.toId === nextToId) ||
+            (c.fromId === nextToId && c.toId === toId)
+        );
+        if (!nextConnection) {
+          const nextToNode = this.allNodes().find((n) => n.id === nextToId);
+          return {
+            success: false,
+            error: `后续路线断开：节点 [${toNode.name}] 到 [${nextToNode?.name || nextToId}] 之间没有连接，无法继续后续运输`,
+          };
+        }
+
+        const nextStartDay = arrivalDay + transitStayDays;
+        const nextArrivalDay = nextStartDay + nextConnection.travelDays;
+        const nextFromConflict = this.checkShipmentConflict(toId, nextStartDay, nextArrivalDay);
+        if (nextFromConflict) {
+          return {
+            success: false,
+            error: `并发超限：中转节点 [${toNode.name}] 在第 ${nextStartDay}-${nextArrivalDay} 日并发超限，无法启运下一段`,
+          };
+        }
+
+        const nextToNode = this.allNodes().find((n) => n.id === nextToId);
+        if (nextToNode && (nextToNode.type === 'cellar' || nextToNode.type === 'jian' || nextToNode.type === 'transit')) {
+          const nextReceivedAmount = receivedAmount - Math.floor(receivedAmount * nextConnection.transitLossRate);
+          const nextAvailableCapacity = this.getAvailableCapacityAtNode(nextToId, nextArrivalDay);
+          if (nextAvailableCapacity < nextReceivedAmount) {
+            return {
+              success: false,
+              error: `后续节点无法接收：节点 [${nextToNode.name}] 在第 ${nextArrivalDay} 日容量不足，无法接收 ${nextReceivedAmount} 单位冰`,
+            };
+          }
+        }
+      }
+
+      currentDay = arrivalDay + (isLastStage ? 0 : transitStayDays);
+      currentAmount = receivedAmount;
+    }
+
+    return { success: true };
+  }
+
+  removeMultiStageShipment(id: string): void {
+    const multiStage = this._multiStageShipments().find((m) => m.id === id);
+    if (!multiStage) return;
+
+    for (const stage of multiStage.stages) {
+      if (stage.status === 'pending') {
+        const fromNode = this.allNodes().find((n) => n.id === stage.fromId);
+        if (fromNode && (fromNode.type === 'cellar' || fromNode.type === 'jian' || fromNode.type === 'transit')) {
+          const updateFn =
+            fromNode.type === 'cellar'
+              ? this.updateCellar.bind(this)
+              : fromNode.type === 'jian'
+              ? this.updateJian.bind(this)
+              : this.updateTransitNode.bind(this);
+          updateFn(fromNode.id, {
+            currentStock: Math.min(fromNode.maxCapacity, fromNode.currentStock + stage.amount),
+          });
+        }
+      }
+    }
+
+    this._transitOccupancies.update(prev =>
+      prev.filter(o => o.multiStageId !== id)
+    );
+
+    this._shipments.update((prev) => prev.filter((s) => s.multiStageId !== id));
+    this._multiStageShipments.update((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  private processMultiStageShipments(day: number, log: DailyLog): void {
+    for (const multiStage of this._multiStageShipments()) {
+      if (multiStage.status === 'completed' || multiStage.status === 'cancelled' || multiStage.status === 'failed') {
+        continue;
+      }
+
+      const currentStage = multiStage.stages[multiStage.currentStageIndex];
+      if (!currentStage) continue;
+
+      const runtimeCheck = this.checkRuntimeAvailability(multiStage, currentStage, day);
+      if (!runtimeCheck.success) {
+        this.failMultiStageShipment(multiStage, runtimeCheck.error!, log);
+        return;
+      }
+
+      if (currentStage.status === 'pending' && currentStage.startDay === day) {
+        const startResult = this.startMultiStageStage(multiStage, currentStage, day, log);
+        if (!startResult.success) {
+          this.failMultiStageShipment(multiStage, startResult.error!, log);
+          return;
+        }
+      }
+
+      if (currentStage.status === 'in_transit' && currentStage.arrivalDay === day) {
+        const arriveResult = this.arriveMultiStageStage(multiStage, currentStage, day, log);
+        if (!arriveResult.success) {
+          this.failMultiStageShipment(multiStage, arriveResult.error!, log);
+          return;
+        }
+      }
+
+      this.updateTransitOccupancyStatus(multiStage, day, log);
+    }
+  }
+
+  private checkRuntimeAvailability(
+    multiStage: MultiStageShipment,
+    currentStage: ShipmentStage,
+    day: number
+  ): { success: boolean; error?: string } {
+    const connection = this._connections().find(
+      (c) =>
+        (c.fromId === currentStage.fromId && c.toId === currentStage.toId) ||
+        (c.fromId === currentStage.toId && c.toId === currentStage.fromId)
+    );
+    if (!connection) {
+      const fromNode = this.allNodes().find((n) => n.id === currentStage.fromId);
+      const toNode = this.allNodes().find((n) => n.id === currentStage.toId);
+      return {
+        success: false,
+        error: `路线断开：节点 [${fromNode?.name || currentStage.fromId}] 到 [${toNode?.name || currentStage.toId}] 的运输连接已被删除，无法继续运输`,
+      };
+    }
+
+    if (currentStage.status === 'pending' && currentStage.startDay >= day) {
+      const isLastStage = multiStage.currentStageIndex === multiStage.stages.length - 1;
+      if (!isLastStage) {
+        const nextStage = multiStage.stages[multiStage.currentStageIndex + 1];
+        const nextConnection = this._connections().find(
+          (c) =>
+            (c.fromId === nextStage.fromId && c.toId === nextStage.toId) ||
+            (c.fromId === nextStage.toId && c.toId === nextStage.fromId)
+        );
+        if (!nextConnection) {
+          const fromNode = this.allNodes().find((n) => n.id === nextStage.fromId);
+          const toNode = this.allNodes().find((n) => n.id === nextStage.toId);
+          return {
+            success: false,
+            error: `后续路线断开：节点 [${fromNode?.name || nextStage.fromId}] 到 [${toNode?.name || nextStage.toId}] 的运输连接已不存在，无法完成后续运输`,
+          };
+        }
+
+        const nextToNode = this.allNodes().find((n) => n.id === nextStage.toId);
+        if (nextToNode && (nextToNode.type === 'cellar' || nextToNode.type === 'jian' || nextToNode.type === 'transit')) {
+          const availableCapacity = this.getAvailableCapacityAtNode(nextToNode.id, nextStage.arrivalDay);
+          if (availableCapacity < nextStage.receivedAmount) {
+            return {
+              success: false,
+              error: `后续节点无法接收：节点 [${nextToNode.name}] 在第 ${nextStage.arrivalDay} 日容量不足，无法接收 ${nextStage.receivedAmount} 单位冰`,
+            };
+          }
+        }
+      }
+    }
+
+    return { success: true };
+  }
+
+  private updateTransitOccupancyStatus(
+    multiStage: MultiStageShipment,
+    day: number,
+    log: DailyLog
+  ): void {
+    for (const occupancy of multiStage.occupancies) {
+      if (occupancy.status === 'active') {
+        if (day > occupancy.endDay) {
+          this._transitOccupancies.update(prev =>
+            prev.map(o =>
+              o.id === occupancy.id ? { ...o, status: 'ended' } : o
+            )
+          );
+        }
+        log.transitOccupancies.push({
+          occupancyId: occupancy.id,
+          nodeId: occupancy.nodeId,
+          amount: occupancy.amount,
+          status: occupancy.status,
+        });
+      }
+    }
+  }
+
+  private startMultiStageStage(
+    multiStage: MultiStageShipment,
+    stage: ShipmentStage,
+    day: number,
+    log: DailyLog
+  ): { success: boolean; error?: string } {
+    const fromNode = this.allNodes().find((n) => n.id === stage.fromId);
+    const toNode = this.allNodes().find((n) => n.id === stage.toId);
+    if (!fromNode || !toNode) {
+      return { success: false, error: '节点不存在' };
+    }
+
+    const fromConflict = this.checkShipmentConflict(stage.fromId, stage.startDay, stage.arrivalDay);
+    const toConflict = this.checkShipmentConflict(stage.toId, stage.startDay, stage.arrivalDay);
+    if (fromConflict || toConflict) {
+      const conflictNode = fromConflict ? fromNode.name : toNode.name;
+      return { success: false, error: `并发超限：节点 [${conflictNode}] 在第 ${stage.startDay}-${stage.arrivalDay} 日并发运输数已达上限，无法启运` };
+    }
+
+    if (stage.occupancyId && multiStage.currentStageIndex > 0) {
+      const prevOccupancy = multiStage.occupancies.find(o => o.id === stage.occupancyId);
+      if (prevOccupancy) {
+        this._transitOccupancies.update(prev =>
+          prev.map(o =>
+            o.id === prevOccupancy.id ? { ...o, status: 'ended' } : o
+          )
+        );
+      }
+    }
+
+    if (fromNode.type === 'cellar' || fromNode.type === 'jian' || fromNode.type === 'transit') {
+      if (fromNode.currentStock < stage.amount) {
+        return { success: false, error: `节点 [${fromNode.name}] 库存不足，当前库存 ${fromNode.currentStock}，需要 ${stage.amount}，无法启运` };
+      }
+      const updateFn =
+        fromNode.type === 'cellar'
+          ? this.updateCellar.bind(this)
+          : fromNode.type === 'jian'
+          ? this.updateJian.bind(this)
+          : this.updateTransitNode.bind(this);
+      updateFn(fromNode.id, {
+        currentStock: fromNode.currentStock - stage.amount,
+      });
+    }
+
+    const shipment: Shipment = {
+      id: this.generateId(),
+      fromId: stage.fromId,
+      toId: stage.toId,
+      amount: stage.amount,
+      startDay: stage.startDay,
+      arrivalDay: stage.arrivalDay,
+      lossAmount: stage.lossAmount,
+      receivedAmount: stage.receivedAmount,
+      connectionId: stage.connectionId,
+      status: 'in_transit',
+      multiStageId: multiStage.id,
+      stageIndex: multiStage.currentStageIndex,
+    };
+    this._shipments.update((prev) => [...prev, shipment]);
+
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) =>
+        m.id === multiStage.id
+          ? {
+              ...m,
+              status: 'in_progress',
+              stages: m.stages.map((s, i) =>
+                i === m.currentStageIndex ? { ...s, status: 'in_transit' } : s
+              ),
+            }
+          : m
+      )
+    );
+
+    log.multiStageUpdates.push({
+      multiStageId: multiStage.id,
+      stageIndex: multiStage.currentStageIndex,
+      status: 'in_transit',
+    });
+
+    return { success: true };
+  }
+
+  private arriveMultiStageStage(
+    multiStage: MultiStageShipment,
+    stage: ShipmentStage,
+    day: number,
+    log: DailyLog
+  ): { success: boolean; error?: string } {
+    const toNode = this.allNodes().find((n) => n.id === stage.toId);
+    if (!toNode) {
+      return { success: false, error: '目标节点不存在' };
+    }
+
+    if (toNode.type === 'cellar' || toNode.type === 'jian' || toNode.type === 'transit') {
+      const availableCapacity = this.getAvailableCapacityAtNode(toNode.id, day);
+      if (availableCapacity < stage.receivedAmount) {
+        const occupied = this.getTotalOccupiedAmountAtNode(toNode.id, day);
+        return {
+          success: false,
+          error: `中转容量不足：节点 [${toNode.name}] 在第 ${day} 日容量不足，已占用 ${occupied}，当前库存 ${toNode.currentStock}，总容量 ${toNode.maxCapacity}，需要 ${stage.receivedAmount}`,
+        };
+      }
+      const updateFn =
+        toNode.type === 'cellar'
+          ? this.updateCellar.bind(this)
+          : toNode.type === 'jian'
+          ? this.updateJian.bind(this)
+          : this.updateTransitNode.bind(this);
+      updateFn(toNode.id, {
+        currentStock: toNode.currentStock + stage.receivedAmount,
+      });
+    }
+
+    const isLastStage = multiStage.currentStageIndex === multiStage.stages.length - 1;
+
+    if (stage.occupancyId && !isLastStage) {
+      this._transitOccupancies.update(prev =>
+        prev.map(o =>
+          o.id === stage.occupancyId ? { ...o, status: 'active' } : o
+        )
+      );
+    }
+
+    this._shipments.update((prev) =>
+      prev.map((s) =>
+        s.multiStageId === multiStage.id && s.stageIndex === multiStage.currentStageIndex
+          ? { ...s, status: 'delivered' }
+          : s
+      )
+    );
+
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) =>
+        m.id === multiStage.id
+          ? {
+              ...m,
+              status: isLastStage ? 'completed' : 'in_progress',
+              currentStageIndex: isLastStage ? m.currentStageIndex : m.currentStageIndex + 1,
+              stages: m.stages.map((s, i) =>
+                i === m.currentStageIndex ? { ...s, status: 'delivered' } : s
+              ),
+            }
+          : m
+      )
+    );
+
+    log.multiStageUpdates.push({
+      multiStageId: multiStage.id,
+      stageIndex: multiStage.currentStageIndex,
+      status: 'delivered',
+    });
+
+    log.deliveries.push({
+      id: stage.id,
+      fromId: stage.fromId,
+      toId: stage.toId,
+      amount: stage.amount,
+      startDay: stage.startDay,
+      arrivalDay: stage.arrivalDay,
+      lossAmount: stage.lossAmount,
+      receivedAmount: stage.receivedAmount,
+      connectionId: stage.connectionId,
+      status: 'delivered',
+      multiStageId: multiStage.id,
+      stageIndex: multiStage.currentStageIndex,
+    });
+
+    return { success: true };
+  }
+
+  private failMultiStageShipment(
+    multiStage: MultiStageShipment,
+    reason: string,
+    log: DailyLog
+  ): void {
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) =>
+        m.id === multiStage.id
+          ? { ...m, status: 'failed', failureReason: reason }
+          : m
+      )
+    );
+
+    for (let i = multiStage.currentStageIndex; i >= 0; i--) {
+      const stage = multiStage.stages[i];
+      if (stage.status === 'in_transit' || stage.status === 'delivered') {
+        const fromNode = this.allNodes().find((n) => n.id === stage.fromId);
+        const toNode = this.allNodes().find((n) => n.id === stage.toId);
+
+        if (stage.status === 'delivered' && toNode) {
+          if (toNode.type === 'cellar' || toNode.type === 'jian' || toNode.type === 'transit') {
+            const updateFn =
+              toNode.type === 'cellar'
+                ? this.updateCellar.bind(this)
+                : toNode.type === 'jian'
+                ? this.updateJian.bind(this)
+                : this.updateTransitNode.bind(this);
+            updateFn(toNode.id, {
+              currentStock: Math.max(0, toNode.currentStock - stage.receivedAmount),
+            });
+          }
+        }
+
+        if (fromNode) {
+          if (fromNode.type === 'cellar' || fromNode.type === 'jian' || fromNode.type === 'transit') {
+            const updateFn =
+              fromNode.type === 'cellar'
+                ? this.updateCellar.bind(this)
+                : fromNode.type === 'jian'
+                ? this.updateJian.bind(this)
+                : this.updateTransitNode.bind(this);
+            updateFn(fromNode.id, {
+              currentStock: Math.min(fromNode.maxCapacity, fromNode.currentStock + stage.amount),
+            });
+          }
+        }
+      }
+    }
+
+    this._transitOccupancies.update(prev =>
+      prev.map(o =>
+        o.multiStageId === multiStage.id && o.status === 'active'
+          ? { ...o, status: 'cancelled' }
+          : o
+      )
+    );
+
+    this._shipments.update((prev) =>
+      prev.map((s) =>
+        s.multiStageId === multiStage.id
+          ? { ...s, status: s.status === 'delivered' ? 'cancelled' : s.status }
+          : s
+      )
+    );
+
+    log.errors.push(`多段联运 [${multiStage.name}] 失败：${reason}`);
+    this._state.update((s) => ({
+      ...s,
+      isPaused: true,
+      pauseReason: reason,
+      failedMultiStageId: multiStage.id,
+    }));
+    this.stopTimer();
+  }
+
   private hasDirectConnection(fromId: string, toId: string): boolean {
     return this._connections().some(
       (c) =>
@@ -420,10 +1105,24 @@ export class SchedulingService {
       warnings: [],
       isOverAllocated: false,
       overAllocationReason: null,
+      pauseReason: null,
+      failedMultiStageId: null,
+      replayConsistencyError: null,
+      replayConsistencyPassed: false,
     }));
     this._shipments.update((prev) =>
       prev.map((s) => ({ ...s, status: 'pending' as const }))
     );
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) => ({
+        ...m,
+        status: 'pending' as const,
+        currentStageIndex: 0,
+        stages: m.stages.map((s) => ({ ...s, status: 'pending' as const })),
+        occupancies: [],
+      }))
+    );
+    this._transitOccupancies.set([]);
   }
 
   start(): void {
@@ -516,9 +1215,12 @@ export class SchedulingService {
     const log = this.createDailyLog(nextDay);
 
     this.processDailyLoss(nextDay, log);
+    this.processMultiStageShipments(nextDay, log);
     this.processShipmentTransits(nextDay, log);
     this.processDeliveries(nextDay, log);
     this.processConsumptions(nextDay, log);
+
+    log.logHash = this.generateLogHash(log);
 
     this._state.update((s) => ({
       ...s,
@@ -545,16 +1247,23 @@ export class SchedulingService {
     const jianStocks: { [id: string]: number } = {};
     for (const j of this._jians()) jianStocks[j.id] = j.currentStock;
 
+    const transitStocks: { [id: string]: number } = {};
+    for (const t of this._transitNodes()) transitStocks[t.id] = t.currentStock;
+
     return {
       day,
       cellarStocks,
       jianStocks,
+      transitStocks,
       activeShipments: JSON.parse(JSON.stringify(this._shipments().filter(s => s.status === 'in_transit' || s.status === 'pending'))),
       deliveries: [],
       consumptions: [],
       dailyLosses: [],
       warnings: [],
       errors: [],
+      multiStageUpdates: [],
+      transitOccupancies: [],
+      logHash: '',
     };
   }
 
@@ -578,6 +1287,17 @@ export class SchedulingService {
         });
         log.dailyLosses.push({ nodeId: jian.id, amount: loss });
         log.jianStocks[jian.id] = Math.max(0, jian.currentStock - loss);
+      }
+    }
+
+    for (const transit of this._transitNodes()) {
+      const loss = Math.floor(transit.currentStock * transit.dailyLossRate);
+      if (loss > 0) {
+        this.updateTransitNode(transit.id, {
+          currentStock: Math.max(0, transit.currentStock - loss),
+        });
+        log.dailyLosses.push({ nodeId: transit.id, amount: loss });
+        log.transitStocks[transit.id] = Math.max(0, transit.currentStock - loss);
       }
     }
   }
@@ -616,7 +1336,7 @@ export class SchedulingService {
 
   private processDeliveries(day: number, log: DailyLog): void {
     const arrivingShipments = this._shipments().filter(
-      (s) => s.arrivalDay === day && s.status !== 'cancelled'
+      (s) => s.arrivalDay === day && s.status !== 'cancelled' && !s.multiStageId
     );
     for (const shipment of arrivingShipments) {
       const toNode = this.allNodes().find((n) => n.id === shipment.toId);
@@ -639,6 +1359,13 @@ export class SchedulingService {
         );
         this.updateJian(toNode.id, { currentStock: newStock });
         log.jianStocks[toNode.id] = newStock;
+      } else if (toNode.type === 'transit') {
+        const newStock = Math.min(
+          toNode.maxCapacity,
+          toNode.currentStock + shipment.receivedAmount
+        );
+        this.updateTransitNode(toNode.id, { currentStock: newStock });
+        log.transitStocks[toNode.id] = newStock;
       }
 
       this._shipments.update((prev) =>
@@ -711,8 +1438,23 @@ export class SchedulingService {
       prev.map((c) => ({ ...c, currentStock: c.maxCapacity }))
     );
     this._jians.update((prev) => prev.map((j) => ({ ...j, currentStock: 0 })));
+    this._transitNodes.update((prev) =>
+      prev.map((t) => ({ ...t, currentStock: 0 }))
+    );
     this._shipments.update((prev) =>
       prev.map((s) => ({ ...s, status: 'pending' as const }))
+    );
+    this._multiStageShipments.update((prev) =>
+      prev.map((m) => ({
+        ...m,
+        status: 'pending' as const,
+        currentStageIndex: 0,
+        stages: m.stages.map((s) => ({ ...s, status: 'pending' as const })),
+        occupancies: m.occupancies.map(o => ({ ...o, status: 'active' as const })),
+      }))
+    );
+    this._transitOccupancies.update(prev =>
+      prev.map(o => ({ ...o, status: 'active' as const }))
     );
     this._state.update((s) => ({
       ...s,
@@ -724,6 +1466,10 @@ export class SchedulingService {
       warnings: [],
       isOverAllocated: false,
       overAllocationReason: null,
+      pauseReason: null,
+      failedMultiStageId: null,
+      replayConsistencyError: null,
+      replayConsistencyPassed: false,
     }));
   }
 
@@ -736,10 +1482,13 @@ export class SchedulingService {
       isReplaying: true,
       isRunning: true,
       logs: [],
+      replayConsistencyError: null,
+      replayConsistencyPassed: false,
     }));
 
     const originalLogs = this._state().originalLogs!;
     let replayIndex = 0;
+    let consistencyError: string | null = null;
 
     this.stopTimer();
     const baseInterval = 1000;
@@ -752,14 +1501,86 @@ export class SchedulingService {
           ...s,
           isReplaying: false,
           isRunning: false,
+          replayConsistencyPassed: consistencyError === null,
+          replayConsistencyError: consistencyError,
         }));
         return;
       }
 
-      const replayLog = JSON.parse(JSON.stringify(originalLogs[replayIndex]));
+      const originalLog = originalLogs[replayIndex];
+      const replayLog = JSON.parse(JSON.stringify(originalLog));
+
+      const verifyResult = this.verifyReplayConsistency(replayLog, originalLog);
+      if (!verifyResult.success && !consistencyError) {
+        consistencyError = verifyResult.error || '回放一致性验证失败';
+      }
+
       this.applyReplayLog(replayLog);
       replayIndex++;
     }, interval);
+  }
+
+  private verifyReplayConsistency(
+    replayLog: DailyLog,
+    originalLog: DailyLog
+  ): { success: boolean; error?: string } {
+    if (replayLog.day !== originalLog.day) {
+      return {
+        success: false,
+        error: `回放第 ${replayLog.day} 日与原记录第 ${originalLog.day} 日不匹配`,
+      };
+    }
+
+    const replayHash = this.generateLogHash(replayLog);
+    if (replayHash !== originalLog.logHash) {
+      return {
+        success: false,
+        error: `第 ${replayLog.day} 日数据不一致：原哈希 ${originalLog.logHash}，回放哈希 ${replayHash}`,
+      };
+    }
+
+    for (const cellarId of Object.keys(originalLog.cellarStocks)) {
+      if (replayLog.cellarStocks[cellarId] !== originalLog.cellarStocks[cellarId]) {
+        return {
+          success: false,
+          error: `第 ${replayLog.day} 日冰窖 [${cellarId}] 库存不一致：原 ${originalLog.cellarStocks[cellarId]}，回放 ${replayLog.cellarStocks[cellarId]}`,
+        };
+      }
+    }
+
+    for (const jianId of Object.keys(originalLog.jianStocks)) {
+      if (replayLog.jianStocks[jianId] !== originalLog.jianStocks[jianId]) {
+        return {
+          success: false,
+          error: `第 ${replayLog.day} 日冰鉴 [${jianId}] 库存不一致：原 ${originalLog.jianStocks[jianId]}，回放 ${replayLog.jianStocks[jianId]}`,
+        };
+      }
+    }
+
+    for (const transitId of Object.keys(originalLog.transitStocks)) {
+      if (replayLog.transitStocks[transitId] !== originalLog.transitStocks[transitId]) {
+        return {
+          success: false,
+          error: `第 ${replayLog.day} 日转运站 [${transitId}] 库存不一致：原 ${originalLog.transitStocks[transitId]}，回放 ${replayLog.transitStocks[transitId]}`,
+        };
+      }
+    }
+
+    if (originalLog.deliveries.length !== replayLog.deliveries.length) {
+      return {
+        success: false,
+        error: `第 ${replayLog.day} 日送达记录数不一致：原 ${originalLog.deliveries.length}，回放 ${replayLog.deliveries.length}`,
+      };
+    }
+
+    if (originalLog.errors.length !== replayLog.errors.length) {
+      return {
+        success: false,
+        error: `第 ${replayLog.day} 日错误记录数不一致：原 ${originalLog.errors.length}，回放 ${replayLog.errors.length}`,
+      };
+    }
+
+    return { success: true };
   }
 
   private applyReplayLog(log: DailyLog): void {
@@ -777,10 +1598,45 @@ export class SchedulingService {
       }
     }
 
+    for (const transit of this._transitNodes()) {
+      if (log.transitStocks[transit.id] !== undefined) {
+        this.updateTransitNode(transit.id, {
+          currentStock: log.transitStocks[transit.id],
+        });
+      }
+    }
+
+    for (const occupancy of log.transitOccupancies) {
+      this._transitOccupancies.update(prev =>
+        prev.map(o =>
+          o.id === occupancy.occupancyId
+            ? { ...o, status: occupancy.status as any }
+            : o
+        )
+      );
+    }
+
     for (const delivery of log.deliveries) {
       this._shipments.update((prev) =>
         prev.map((s) =>
           s.id === delivery.id ? { ...s, status: 'delivered' } : s
+        )
+      );
+    }
+
+    for (const update of log.multiStageUpdates) {
+      this._multiStageShipments.update((prev) =>
+        prev.map((m) =>
+          m.id === update.multiStageId
+            ? {
+                ...m,
+                status: update.status === 'delivered' && m.currentStageIndex === m.stages.length - 1 ? 'completed' : 'in_progress',
+                currentStageIndex: update.status === 'delivered' ? Math.min(m.currentStageIndex + 1, m.stages.length - 1) : m.currentStageIndex,
+                stages: m.stages.map((s, i) =>
+                  i === update.stageIndex ? { ...s, status: update.status as any } : s
+                ),
+              }
+            : m
         )
       );
     }
@@ -800,6 +1656,7 @@ export class SchedulingService {
       connections: JSON.parse(JSON.stringify(this._connections())),
       consumptionPlans: JSON.parse(JSON.stringify(this._consumptionPlans())),
       shipments: JSON.parse(JSON.stringify(this._shipments())),
+      multiStageShipments: JSON.parse(JSON.stringify(this._multiStageShipments())),
       totalDays: this._state().totalDays,
     };
   }
@@ -812,6 +1669,7 @@ export class SchedulingService {
     this._connections.set(config.connections);
     this._consumptionPlans.set(config.consumptionPlans);
     this._shipments.set(config.shipments);
+    this._multiStageShipments.set(config.multiStageShipments || []);
     this.setTotalDays(config.totalDays);
   }
 
@@ -845,8 +1703,21 @@ export class SchedulingService {
     const transit1 = this.addTransitNode({
       name: '地安门转运站',
       maxConcurrentShipments: 2,
+      maxCapacity: 3000,
+      currentStock: 0,
+      dailyLossRate: 0.03,
       positionX: 350,
       positionY: 250,
+    });
+
+    const transit2 = this.addTransitNode({
+      name: '景山前门转运站',
+      maxConcurrentShipments: 1,
+      maxCapacity: 2000,
+      currentStock: 0,
+      dailyLossRate: 0.025,
+      positionX: 475,
+      positionY: 200,
     });
 
     const jian1 = this.addJian({
@@ -893,6 +1764,20 @@ export class SchedulingService {
       toId: jian2.id,
       travelDays: 1,
       transitLossRate: 0.03,
+    });
+
+    const conn5 = this.addConnection({
+      fromId: transit1.id,
+      toId: transit2.id,
+      travelDays: 1,
+      transitLossRate: 0.02,
+    });
+
+    const conn6 = this.addConnection({
+      fromId: transit2.id,
+      toId: jian1.id,
+      travelDays: 1,
+      transitLossRate: 0.02,
     });
 
     for (let day = 1; day <= 30; day++) {
@@ -1021,6 +1906,13 @@ export class SchedulingService {
       connectionId: conn3.id,
       lossAmount: 0,
       receivedAmount: 0,
+    });
+
+    this.addMultiStageShipment({
+      name: '景山西冰窖经双转运至御膳房',
+      totalAmount: 1000,
+      nodeIds: [cellar1.id, transit1.id, transit2.id, jian1.id],
+      startDay: 25,
     });
 
     this.setTotalDays(30);

@@ -489,3 +489,29 @@
     background: rgba(255, 193, 7, 0.08);
   }
 }
+
+.breakdown-bar {
+  position: relative;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 6px 0;
+
+  .fill {
+    position: absolute;
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+
+    &.occupancy-fill {
+      background: repeating-linear-gradient(
+        45deg,
+        rgba(180, 140, 255, 0.6),
+        rgba(180, 140, 255, 0.6) 5px,
+        rgba(180, 140, 255, 0.4) 5px,
+        rgba(180, 140, 255, 0.4) 10px
+      );
+    }
+  }
+}

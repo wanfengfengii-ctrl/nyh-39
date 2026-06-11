@@ -2,7 +2,7 @@ import { Component, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SchedulingService } from '../../services/scheduling.service';
-import { Shipment } from '../../models/ice.models';
+import { Shipment, MultiStageShipment } from '../../models/ice.models';
 
 @Component({
   selector: 'app-plan-config',
@@ -12,9 +12,10 @@ import { Shipment } from '../../models/ice.models';
   styleUrl: './plan-config.component.scss',
 })
 export class PlanConfigComponent {
-  activeTab = signal<'connections' | 'shipments' | 'consumptions'>('connections');
+  activeTab = signal<'connections' | 'shipments' | 'multiStage' | 'consumptions'>('connections');
   showAddConnection = signal(false);
   showAddShipment = signal(false);
+  showAddMultiStage = signal(false);
   showAddConsumption = signal(false);
 
   newConnection = {
@@ -33,6 +34,16 @@ export class PlanConfigComponent {
     arrivalDay: 1,
   };
 
+  newMultiStage = {
+    name: '',
+    totalAmount: 1000,
+    nodeIds: [] as string[],
+    startDay: 0,
+    transitStayDays: 1,
+  };
+
+  selectedNode = '';
+
   newConsumption = {
     jianId: '',
     day: 1,
@@ -42,10 +53,63 @@ export class PlanConfigComponent {
 
   readonly connections = computed(() => this.schedulingService.connections());
   readonly shipments = computed(() => this.schedulingService.shipments());
+  readonly singleShipments = computed(() => this.shipments().filter(s => !s.multiStageId));
+  readonly multiStageShipments = computed(() => this.schedulingService.multiStageShipments());
   readonly consumptions = computed(() => this.schedulingService.consumptionPlans());
   readonly allNodes = computed(() => this.schedulingService.allNodes());
   readonly jians = computed(() => this.schedulingService.jians());
   readonly state = computed(() => this.schedulingService.state());
+
+  readonly previewSchedule = computed(() => {
+    const stages = this.previewStages();
+    const schedule: string[] = [];
+    for (let i = 0; i < stages.length; i++) {
+      const stage = stages[i];
+      const fromName = this.getStageNodeName(stage.fromId);
+      const toName = this.getStageNodeName(stage.toId);
+      schedule.push(`${fromName} → ${toName} (第${stage.startDay}日→第${stage.arrivalDay}日)`);
+      if (i < stages.length - 1) {
+        schedule.push(`  ↳ 中转停留${this.newMultiStage.transitStayDays}天`);
+      }
+    }
+    return schedule;
+  });
+
+  previewStages = computed(() => {
+    if (this.newMultiStage.nodeIds.length < 2) return [];
+    const stages: any[] = [];
+    let currentDay = this.newMultiStage.startDay;
+    let currentAmount = this.newMultiStage.totalAmount;
+
+    for (let i = 0; i < this.newMultiStage.nodeIds.length - 1; i++) {
+      const fromId = this.newMultiStage.nodeIds[i];
+      const toId = this.newMultiStage.nodeIds[i + 1];
+      const connection = this.connections().find(
+        (c) =>
+          (c.fromId === fromId && c.toId === toId) ||
+          (c.fromId === toId && c.toId === fromId)
+      );
+      if (!connection) continue;
+
+      const lossAmount = Math.floor(currentAmount * connection.transitLossRate);
+      const receivedAmount = currentAmount - lossAmount;
+
+      stages.push({
+        fromId,
+        toId,
+        startDay: currentDay,
+        arrivalDay: currentDay + connection.travelDays,
+        amount: currentAmount,
+        lossAmount,
+        receivedAmount,
+      });
+
+      currentDay = currentDay + connection.travelDays;
+      currentAmount = receivedAmount;
+    }
+
+    return stages;
+  });
 
   availableConnectionsForShipment = computed(() => {
     const { fromId, toId } = this.newShipment;
@@ -173,5 +237,102 @@ export class PlanConfigComponent {
       cancelled: 'status-cancelled',
     };
     return map[s.status];
+  }
+
+  addMultiStageNode(nodeId: string): void {
+    if (!nodeId) return;
+    if (this.newMultiStage.nodeIds.includes(nodeId)) {
+      alert('该节点已在路线中');
+      return;
+    }
+    this.newMultiStage.nodeIds.push(nodeId);
+  }
+
+  removeMultiStageNode(index: number): void {
+    this.newMultiStage.nodeIds.splice(index, 1);
+  }
+
+  addMultiStage(): void {
+    if (!this.newMultiStage.name) {
+      alert('请输入运输名称');
+      return;
+    }
+    if (this.newMultiStage.nodeIds.length < 2) {
+      alert('请至少选择 2 个节点');
+      return;
+    }
+    const result = this.schedulingService.addMultiStageShipment({
+      ...this.newMultiStage,
+    });
+    if (!result.success) {
+      alert(result.error);
+      return;
+    }
+    this.showAddMultiStage.set(false);
+    this.newMultiStage = {
+      name: '',
+      totalAmount: 1000,
+      nodeIds: [],
+      startDay: 0,
+      transitStayDays: 1,
+    };
+  }
+
+  removeMultiStage(id: string): void {
+    this.schedulingService.removeMultiStageShipment(id);
+  }
+
+  getMultiStageStatusText(m: MultiStageShipment): string {
+    const map: Record<MultiStageShipment['status'], string> = {
+      pending: '待启运',
+      in_progress: '运输中',
+      completed: '已完成',
+      cancelled: '已取消',
+      failed: '已失败',
+    };
+    return map[m.status];
+  }
+
+  getMultiStageStatusClass(m: MultiStageShipment): string {
+    const map: Record<MultiStageShipment['status'], string> = {
+      pending: 'status-pending',
+      in_progress: 'status-transit',
+      completed: 'status-delivered',
+      cancelled: 'status-cancelled',
+      failed: 'status-cancelled',
+    };
+    return map[m.status];
+  }
+
+  getStageNodeName(nodeId: string): string {
+    return this.allNodes().find((n) => n.id === nodeId)?.name || nodeId;
+  }
+
+  calculateMultiStageSchedule(m: MultiStageShipment): string[] {
+    const schedule: string[] = [];
+    for (let i = 0; i < m.stages.length; i++) {
+      const stage = m.stages[i];
+      const fromName = this.getStageNodeName(stage.fromId);
+      const toName = this.getStageNodeName(stage.toId);
+      schedule.push(`${fromName} → ${toName} (第${stage.startDay}日→第${stage.arrivalDay}日)`);
+    }
+    return schedule;
+  }
+
+  getStageStatusText(status: string): string {
+    const map: Record<string, string> = {
+      pending: '待启运',
+      in_transit: '运输中',
+      delivered: '已送达',
+      cancelled: '已取消',
+      failed: '已失败',
+    };
+    return map[status] || status;
+  }
+
+  readonly transitOccupancies = computed(() => this.schedulingService.transitOccupancies());
+
+  getNodeOccupancy(nodeId: string): number {
+    return this.schedulingService.getTotalOccupiedAmountAtNode(nodeId, this.state().currentDay);
   }
 }

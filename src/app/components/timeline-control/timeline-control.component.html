@@ -105,10 +105,33 @@
     </div>
   }
 
+  @if (state().pauseReason && !state().overAllocationReason) {
+    <div class="alert alert-warning">
+      <strong>⏸ 调度已暂停</strong>
+      <p>{{ state().pauseReason }}</p>
+      <small>请修复问题后重新调度，或调整相关参数后继续</small>
+    </div>
+  }
+
   @if (state().isReplaying) {
     <div class="alert alert-info">
       <strong>↻ 回放模式</strong>
       <p>正在回放原始调度记录，结果与原记录保持一致</p>
+    </div>
+  }
+
+  @if (state().replayConsistencyError) {
+    <div class="alert alert-danger">
+      <strong>❌ 回放一致性验证失败</strong>
+      <p>{{ state().replayConsistencyError }}</p>
+      <small>回放数据与原调度记录不一致，请检查数据完整性</small>
+    </div>
+  }
+
+  @if (state().replayConsistencyPassed && !state().isReplaying) {
+    <div class="alert alert-success">
+      <strong>✅ 回放一致性验证通过</strong>
+      <p>回放结果与原调度记录完全一致</p>
     </div>
   }
 </div>

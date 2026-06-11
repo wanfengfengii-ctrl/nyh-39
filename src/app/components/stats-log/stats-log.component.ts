@@ -37,6 +37,40 @@ export class StatsLogComponent {
   readonly totalJianCapacity = computed(() =>
     this.jians().reduce((sum, j) => sum + j.maxCapacity, 0)
   );
+  readonly totalTransitStock = computed(() =>
+    this.transitNodes().reduce((sum, t) => sum + t.currentStock, 0)
+  );
+  readonly totalTransitCapacity = computed(() =>
+    this.transitNodes().reduce((sum, t) => sum + t.maxCapacity, 0)
+  );
+
+  readonly multiStageShipments = computed(() => this.schedulingService.multiStageShipments());
+  readonly activeMultiStage = computed(() =>
+    this.multiStageShipments().filter((m) => m.status === 'in_progress' || m.status === 'pending')
+  );
+  readonly completedMultiStage = computed(() =>
+    this.multiStageShipments().filter((m) => m.status === 'completed')
+  );
+  readonly failedMultiStage = computed(() =>
+    this.multiStageShipments().filter((m) => m.status === 'failed')
+  );
+
+  readonly totalOccupiedAmount = computed(() => {
+    const day = this.state().currentDay;
+    let total = 0;
+    for (const node of this.transitNodes()) {
+      total += this.schedulingService.getTotalOccupiedAmountAtNode(node.id, day);
+    }
+    return total;
+  });
+
+  getNodeOccupancy(nodeId: string): number {
+    return this.schedulingService.getTotalOccupiedAmountAtNode(nodeId, this.state().currentDay);
+  }
+
+  getNodeAvailableCapacity(nodeId: string): number {
+    return this.schedulingService.getAvailableCapacityAtNode(nodeId, this.state().currentDay);
+  }
 
   readonly activeShipments = computed(() =>
     this.shipments().filter((s) => s.status === 'in_transit' || s.status === 'pending')

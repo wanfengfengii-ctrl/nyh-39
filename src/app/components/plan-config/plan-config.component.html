@@ -8,7 +8,11 @@
       <button
         [class.active]="activeTab() === 'shipments'"
         (click)="activeTab.set('shipments')"
-      >运输计划 ({{ shipments().length }})</button>
+      >运输计划 ({{ singleShipments().length }})</button>
+      <button
+        [class.active]="activeTab() === 'multiStage'"
+        (click)="activeTab.set('multiStage')"
+      >多段联运 ({{ multiStageShipments().length }})</button>
       <button
         [class.active]="activeTab() === 'consumptions'"
         (click)="activeTab.set('consumptions')"
@@ -133,6 +137,137 @@
         }
         @empty {
           <div class="empty-hint">暂无运输计划</div>
+        }
+      </div>
+    </div>
+  }
+
+  @if (activeTab() === 'multiStage') {
+    <div class="tab-content">
+      <div class="action-bar">
+        <button class="btn-primary" (click)="showAddMultiStage.set(!showAddMultiStage())">
+          {{ showAddMultiStage() ? '取消' : '+ 添加多段联运' }}
+        </button>
+      </div>
+
+      @if (showAddMultiStage()) {
+        <div class="add-form">
+          <div class="form-grid">
+            <label>运输名称
+              <input type="text" [(ngModel)]="newMultiStage.name" placeholder="例如：景山西经双转运至御膳房">
+            </label>
+            <label>总运输量
+              <input type="number" [(ngModel)]="newMultiStage.totalAmount" min="1">
+            </label>
+            <label>启运日
+              <input type="number" [(ngModel)]="newMultiStage.startDay" min="0">
+            </label>
+            <label>中转停留天数
+              <input type="number" [(ngModel)]="newMultiStage.transitStayDays" min="1" max="30">
+            </label>
+          </div>
+
+          <div class="form-section">
+            <label>运输节点（按顺序添加）</label>
+            <div class="node-selection">
+              <select [(ngModel)]="selectedNode" (change)="addMultiStageNode(selectedNode); selectedNode = ''">
+                <option value="">- 选择节点添加 -</option>
+                @for (node of allNodes(); track node.id) {
+                  <option [value]="node.id">{{ node.name }} ({{ node.type }})</option>
+                }
+              </select>
+            </div>
+            <div class="selected-nodes">
+              @for (nodeId of newMultiStage.nodeIds; track nodeId; let i = $index) {
+                <div class="node-chip">
+                  <span class="node-order">{{ i + 1 }}</span>
+                  <span>{{ getStageNodeName(nodeId) }}</span>
+                  <button class="btn-remove" (click)="removeMultiStageNode(i)">×</button>
+                </div>
+                @if (i < newMultiStage.nodeIds.length - 1) {
+                  <span class="node-arrow">→</span>
+                }
+              }
+              @empty {
+                <div class="empty-hint">请按顺序添加运输节点</div>
+              }
+            </div>
+          </div>
+
+          @if (newMultiStage.nodeIds.length >= 2) {
+            <div class="schedule-preview">
+              <label>预计时间轴：</label>
+              <ul>
+                @for (item of previewSchedule(); track item) {
+                  <li>{{ item }}</li>
+                }
+              </ul>
+            </div>
+          }
+
+          <button class="btn-primary btn-block" (click)="addMultiStage()">确认添加</button>
+        </div>
+      }
+
+      <div class="list">
+        @for (m of multiStageShipments(); track m.id) {
+          <div class="list-item multi-stage-item">
+            <div class="item-main">
+              <div class="item-header">
+                <span class="status-tag" [class]="getMultiStageStatusClass(m)">
+                  {{ getMultiStageStatusText(m) }}
+                </span>
+                <span class="multi-stage-name">{{ m.name }}</span>
+                <span class="multi-stage-amount">{{ m.totalAmount }}单位</span>
+                <span class="multi-stage-current">
+                  @if (m.status === 'in_progress') {
+                    当前第 {{ m.currentStageIndex + 1 }}/{{ m.stages.length }} 段
+                  }
+                </span>
+              </div>
+              <div class="multi-stage-route">
+                @for (stage of m.stages; track stage.id; let i = $index) {
+                  <div class="stage-item" [class.current]="i === m.currentStageIndex && m.status === 'in_progress'">
+                    <span class="stage-index">{{ i + 1 }}</span>
+                    <span class="node-tag from">{{ getStageNodeName(stage.fromId) }}</span>
+                    <span class="arrow">→</span>
+                    <span class="node-tag to">{{ getStageNodeName(stage.toId) }}</span>
+                    <span class="stage-time">(第{{ stage.startDay }}日→第{{ stage.arrivalDay }}日)</span>
+                    <span class="stage-amount">{{ stage.amount }}→{{ stage.receivedAmount }}单位</span>
+                    <span class="stage-loss" [title]="'损耗' + stage.lossAmount + '单位'">(-{{ stage.lossAmount }})</span>
+                    <span class="stage-status status-tag" [class]="'status-' + stage.status">
+                      {{ getStageStatusText(stage.status) }}
+                    </span>
+                    @if (stage.transitStayDays && !stage.status.includes('cancelled') && !stage.status.includes('failed') && i < m.stages.length - 1) {
+                      <span class="stage-stay" title="中转停留天数">停留{{ stage.transitStayDays }}天</span>
+                    }
+                  </div>
+                }
+              </div>
+              @if (m.occupancies && m.occupancies.length > 0) {
+                <div class="occupancies-info">
+                  <strong>中转库存占用：</strong>
+                  @for (occ of m.occupancies; track occ.id) {
+                    <span class="occupancy-tag" [class.ended]="occ.status === 'ended'" [class.cancelled]="occ.status === 'cancelled'">
+                      [{{ getStageNodeName(occ.nodeId) }}] {{ occ.amount }}单位
+                      (第{{ occ.startDay }}日-第{{ occ.endDay }}日) {{ occ.status === 'active' ? '占用中' : occ.status === 'ended' ? '已释放' : '已取消' }}
+                    </span>
+                  }
+                </div>
+              }
+              @if (m.failureReason) {
+                <div class="failure-reason">
+                  <strong>❌ 失败原因：</strong>{{ m.failureReason }}
+                </div>
+              }
+            </div>
+            @if (m.status === 'pending') {
+              <button class="btn-danger" (click)="removeMultiStage(m.id)">取消</button>
+            }
+          </div>
+        }
+        @empty {
+          <div class="empty-hint">暂无多段联运计划</div>
         }
       </div>
     </div>

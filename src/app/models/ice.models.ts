@@ -25,6 +25,9 @@ export interface IceJian extends BaseNode {
 export interface TransitNode extends BaseNode {
   type: 'transit';
   maxConcurrentShipments: number;
+  maxCapacity: number;
+  currentStock: number;
+  dailyLossRate: number;
 }
 
 export type IceNode = IceCellar | IceJian | TransitNode;
@@ -56,18 +59,62 @@ export interface Shipment {
   receivedAmount: number;
   connectionId: string;
   status: 'pending' | 'in_transit' | 'delivered' | 'cancelled';
+  multiStageId?: string;
+  stageIndex?: number;
+}
+
+export interface ShipmentStage {
+  id: string;
+  fromId: string;
+  toId: string;
+  connectionId: string;
+  startDay: number;
+  arrivalDay: number;
+  amount: number;
+  lossAmount: number;
+  receivedAmount: number;
+  status: 'pending' | 'in_transit' | 'delivered' | 'cancelled' | 'failed';
+  transitStayDays?: number;
+  occupancyId?: string;
+}
+
+export interface TransitOccupancy {
+  id: string;
+  multiStageId: string;
+  stageIndex: number;
+  nodeId: string;
+  amount: number;
+  startDay: number;
+  endDay: number;
+  status: 'active' | 'ended' | 'cancelled';
+}
+
+export interface MultiStageShipment {
+  id: string;
+  name: string;
+  totalAmount: number;
+  stages: ShipmentStage[];
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'failed';
+  currentStageIndex: number;
+  failureReason?: string;
+  createdAt: number;
+  occupancies: TransitOccupancy[];
 }
 
 export interface DailyLog {
   day: number;
   cellarStocks: { [cellarId: string]: number };
   jianStocks: { [jianId: string]: number };
+  transitStocks: { [nodeId: string]: number };
   activeShipments: Shipment[];
   deliveries: Shipment[];
   consumptions: { jianId: string; amount: number; success: boolean; reason?: string }[];
   dailyLosses: { nodeId: string; amount: number }[];
   warnings: string[];
   errors: string[];
+  multiStageUpdates: { multiStageId: string; stageIndex: number; status: string }[];
+  transitOccupancies: { occupancyId: string; nodeId: string; amount: number; status: string }[];
+  logHash: string;
 }
 
 export interface SchedulingState {
@@ -82,6 +129,10 @@ export interface SchedulingState {
   warnings: string[];
   isOverAllocated: boolean;
   overAllocationReason: string | null;
+  pauseReason: string | null;
+  failedMultiStageId: string | null;
+  replayConsistencyError: string | null;
+  replayConsistencyPassed: boolean;
 }
 
 export interface SchedulingConfig {
@@ -91,5 +142,6 @@ export interface SchedulingConfig {
   connections: NodeConnection[];
   consumptionPlans: DailyConsumptionPlan[];
   shipments: Shipment[];
+  multiStageShipments: MultiStageShipment[];
   totalDays: number;
 }

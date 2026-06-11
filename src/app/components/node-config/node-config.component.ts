@@ -36,6 +36,9 @@ export class NodeConfigComponent {
   newTransit = {
     name: '',
     maxConcurrentShipments: 2,
+    maxCapacity: 2000,
+    currentStock: 0,
+    dailyLossRate: 0.03,
     positionX: 100,
     positionY: 100,
   };
@@ -108,6 +111,33 @@ export class NodeConfigComponent {
     this.schedulingService.updateTransitNode(node.id, {
       maxConcurrentShipments: value,
     });
+  }
+
+  updateTransitStock(node: TransitNode, event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    try {
+      this.schedulingService.updateTransitNode(node.id, { currentStock: value });
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    }
+  }
+
+  updateTransitLoss(node: TransitNode, event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    try {
+      this.schedulingService.updateTransitNode(node.id, { dailyLossRate: value });
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    }
+  }
+
+  updateTransitMaxCapacity(node: TransitNode, event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    try {
+      this.schedulingService.updateTransitNode(node.id, { maxCapacity: value });
+    } catch (e: unknown) {
+      alert((e as Error).message);
+    }
   }
 
   removeCellar(id: string): void {
