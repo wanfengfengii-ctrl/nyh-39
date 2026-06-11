@@ -116,7 +116,7 @@
       }
 
       <div class="list">
-        @for (ship of shipments(); track ship.id) {
+        @for (ship of singleShipments(); track ship.id) {
           <div class="list-item shipment-item">
             <div class="item-main">
               <span class="status-tag" [class]="getShipmentStatusClass(ship)">

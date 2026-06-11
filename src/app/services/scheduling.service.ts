@@ -179,6 +179,8 @@ export class SchedulingService {
       prev.filter((s) => s.fromId !== id && s.toId !== id)
     );
 
+    this._removeMultiStageShipmentsForNode(id);
+
     if (relatedConnections.length > 0) {
       this._connections.update((prev) =>
         prev.filter((c) => c.fromId !== id && c.toId !== id)
@@ -215,6 +217,9 @@ export class SchedulingService {
     this._shipments.update((prev) =>
       prev.filter((s) => s.fromId !== id && s.toId !== id)
     );
+
+    this._removeMultiStageShipmentsForNode(id);
+
     this._connections.update((prev) =>
       prev.filter((c) => c.fromId !== id && c.toId !== id)
     );
@@ -258,6 +263,9 @@ export class SchedulingService {
     this._shipments.update((prev) =>
       prev.filter((s) => s.fromId !== id && s.toId !== id)
     );
+
+    this._removeMultiStageShipmentsForNode(id);
+
     this._connections.update((prev) =>
       prev.filter((c) => c.fromId !== id && c.toId !== id)
     );
@@ -642,6 +650,15 @@ export class SchedulingService {
 
     this._shipments.update((prev) => prev.filter((s) => s.multiStageId !== id));
     this._multiStageShipments.update((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  private _removeMultiStageShipmentsForNode(nodeId: string): void {
+    const relatedMultiStages = this._multiStageShipments().filter((m) =>
+      m.stages.some((s) => s.fromId === nodeId || s.toId === nodeId)
+    );
+    for (const multiStage of relatedMultiStages) {
+      this.removeMultiStageShipment(multiStage.id);
+    }
   }
 
   private processMultiStageShipments(day: number, log: DailyLog): void {

@@ -94,17 +94,20 @@ export class PlanConfigComponent {
       const lossAmount = Math.floor(currentAmount * connection.transitLossRate);
       const receivedAmount = currentAmount - lossAmount;
 
+      const arrivalDay = currentDay + connection.travelDays;
+      const isLastStage = i === this.newMultiStage.nodeIds.length - 2;
+
       stages.push({
         fromId,
         toId,
         startDay: currentDay,
-        arrivalDay: currentDay + connection.travelDays,
+        arrivalDay,
         amount: currentAmount,
         lossAmount,
         receivedAmount,
       });
 
-      currentDay = currentDay + connection.travelDays;
+      currentDay = arrivalDay + (isLastStage ? 0 : this.newMultiStage.transitStayDays);
       currentAmount = receivedAmount;
     }
 
